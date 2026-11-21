@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cat_two_local": {
+      "command": "python3",
+      "args": ["-B", "./scripts/server.py"],
+      "cwd": ".",
+      "startup_timeout_sec": 40,
+      "tool_timeout_sec": 60,
+      "default_tools_approval_mode": "writes"
+    }
+  }
+}

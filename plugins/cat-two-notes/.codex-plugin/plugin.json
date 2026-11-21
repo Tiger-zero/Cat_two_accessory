@@ -1,0 +1,21 @@
+{
+  "name": "cat-two-notes",
+  "version": "0.1.0",
+  "description": "连接本地配置的 Cat_two 实例，整理笔记并在确认后归档 Codex 任务。",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Cat_two 笔记",
+    "shortDescription": "查询和整理 Cat_two 笔记，归档 Codex 任务",
+    "defaultPrompt": [
+      "检查 Cat_two 连接并显示当前账号。",
+      "按已有标签汇总 Cat_two 最近七天的未完成待办，保留原笔记链接。",
+      "把本次任务整理成 Cat_two 归档草稿，先给我确认。"
+    ]
+  },
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/cat-two-setup/SKILL.md"
+    }
+  }
+}
