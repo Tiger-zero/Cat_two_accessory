@@ -37,16 +37,22 @@ jobs:
             '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
             '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"cat_two_settings_read","arguments":{}}}' \
+            '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"ui://cat-two-notes/setup.html"}}' \
             | "$smoke_dir/runtime/bin/python3" -E -s -B "$smoke_dir/scripts/server.py" \
             | python3 -c 'import json, sys
-          init, listing, settings = map(json.loads, sys.stdin)
+          init, listing, settings, form = map(json.loads, sys.stdin)
           assert init["result"]["serverInfo"]["version"] == sys.argv[1]
           capability = init["result"]["capabilities"]["extensions"]["openai/settings"]
-          names = {tool["name"] for tool in listing["result"]["tools"]}
-          assert {"cat_two_connection_status", "cat_two_open_setup", capability["readTool"], capability["updateTool"]} <= names
+          tools = {tool["name"]: tool for tool in listing["result"]["tools"]}
+          assert {"cat_two_connection_status", "cat_two_open_setup", capability["readTool"], capability["updateTool"]} <= tools.keys()
+          assert tools["cat_two_setup_save"]["_meta"]["ui"]["visibility"] == ["app"]
           page = settings["result"]["structuredContent"]
           assert page["schema"]["properties"] == page["values"] == {}
-          assert page["layout"][0]["items"][0]["tool"] == "cat_two_open_setup"
+          action = page["layout"][0]["items"][0]["tool"]
+          resource = form["result"]["contents"][0]
+          assert tools[action]["_meta"]["ui"]["resourceUri"] == resource["uri"]
+          assert resource["mimeType"] == "text/html;profile=mcp-app"
+          assert "cat_two_setup_save" in resource["text"]
           ' "$version"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -63,38 +69,52 @@ jobs:
         with:
           name: cat-two-notes-platform-packages
           path: dist
-      - name: Verify the Windows setup launcher
+      - name: Verify the packaged Windows connection window
         shell: pwsh
         run: |
           $zip = Get-ChildItem dist -Filter '*-windows-x64.zip' | Select-Object -First 1
           $extract = Join-Path $env:RUNNER_TEMP 'Cat Two 测试'
           Expand-Archive -LiteralPath $zip.FullName -DestinationPath $extract
-          $launcher = Join-Path (Join-Path $extract $zip.BaseName) 'setup-cat-two.cmd'
-          if (-not (Test-Path -LiteralPath $launcher)) { throw "Missing launcher: $launcher" }
-          $output = Join-Path $env:RUNNER_TEMP 'cat-two-setup-output.txt'
-          $errors = Join-Path $env:RUNNER_TEMP 'cat-two-setup-errors.txt'
-          $process = Start-Process -FilePath $env:ComSpec -ArgumentList ('/d /s /c ""{0}""' -f $launcher) `
-            -NoNewWindow -RedirectStandardOutput $output -RedirectStandardError $errors -PassThru
-          try {
-            $deadline = (Get-Date).AddSeconds(35)
-            $url = ''
-            do {
-              Start-Sleep -Milliseconds 500
-              $text = Get-Content -LiteralPath $output -Raw
-              if ($text) { $url = [regex]::Match($text, 'http://127\.0\.0\.1:\d+/setup/[\w-]+').Value }
-            } until ($url -or $process.HasExited -or (Get-Date) -gt $deadline)
-            if (-not $url) {
-              if ($text) { Write-Output $text }
-              Get-Content -LiteralPath $errors
-              throw 'The launcher did not produce a setup URL.'
-            }
-            $page = Invoke-WebRequest -Uri $url -TimeoutSec 10 -NoProxy
-            if ($page.StatusCode -ne 200 -or -not $page.Content.Contains('name="token"')) {
-              throw 'The launcher did not serve the Cat_two setup form.'
-            }
-          } finally {
-            if (-not $process.HasExited) { taskkill /PID $process.Id /T /F | Out-Null }
+          $root = Join-Path $extract $zip.BaseName
+          $launcher = Join-Path $root 'setup-cat-two.cmd'
+          if (-not (Select-String -LiteralPath $launcher -Pattern 'setup-window' -Quiet)) {
+            throw 'The launcher does not use the native window.'
           }
+          $plugin = Join-Path $root 'plugins/cat-two-notes'
+          $runtime = Join-Path $plugin 'runtime/python.exe'
+          $smoke = Join-Path $env:RUNNER_TEMP 'cat-two-window-smoke.py'
+          @'
+          import socket
+          import sys
+          import tempfile
+          import tkinter as tk
+          from pathlib import Path
+          from unittest.mock import patch
+
+          sys.path.insert(0, sys.argv[1])
+          import settings
+          from setup_window import SetupWindow
+
+          with tempfile.TemporaryDirectory() as profile:
+              config = Path(profile) / "connection.json"
+              with patch.object(settings, "_settings_path", return_value=config), patch.object(
+                  socket, "create_connection", side_effect=AssertionError("Settings went online")
+              ):
+                  root = tk.Tk()
+                  try:
+                      form = SetupWindow(root)
+                      root.update()
+                      assert root.winfo_viewable() and form.token_entry.cget("show")
+                      form.endpoint.set("https://cat-two.example.invalid")
+                      form.token.set("cat_two_fixture")
+                      form.save_button.invoke()
+                      assert settings.load_settings() == ("https://cat-two.example.invalid/mcp", "cat_two_fixture")
+                      assert form.token.get() == ""
+                  finally:
+                      root.destroy()
+          '@ | Set-Content -LiteralPath $smoke -Encoding utf8
+          & $runtime -X utf8 -E -s -B $smoke (Join-Path $plugin 'scripts')
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows connection form failed.' }
   release:
     if: github.ref_type == 'tag'
     needs: [build, windows-setup]
@@ -122,5 +142,5 @@ jobs:
             gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.zip.sha256 \
               --verify-tag --repo "$GITHUB_REPOSITORY" \
               --title "Cat_two 笔记 · Codex 插件 $GITHUB_REF_NAME" \
-              --notes '安装后点「设置」运行首次引导。后续从插件设置的「服务端连接 → 添加或修改服务端」打开本机表单。Windows 市场包也提供 `setup-cat-two.cmd`。单插件导入包文件名以 `-plugin.zip` 结尾。'
+              --notes '安装后点「设置 Cat_two 笔记」，或从插件设置的「服务端连接 → 添加或修改服务端」打开内嵌表单。保存配置时不访问服务端。Windows 市场包的 `setup-cat-two.cmd` 也可直接打开本机配置窗口。'
           fi

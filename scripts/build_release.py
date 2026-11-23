@@ -25,9 +25,11 @@ FILES = (
     "plugin.json",
     "mcp.json",
     *LEGACY_FILES,
+    "assets/setup.html",
     "scripts/server.py",
     "scripts/settings.py",
     "scripts/setup_web.py",
+    "scripts/setup_window.py",
     "skills/cat-two-setup/SKILL.md",
     "skills/organize-notes/SKILL.md",
 )

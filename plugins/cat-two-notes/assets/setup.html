@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-he1NpAQur+pFgRBI+qDDkbjXeiNh5n1NQ1ioTh1EmHY='; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+  <title>连接 Cat_two</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --text: var(--color-text-primary, light-dark(#202020, #f1f1f1));
+      --muted: var(--color-text-secondary, light-dark(#626262, #adadad));
+      --field: var(--color-background-secondary, light-dark(#fafafa, #282828));
+      --border: var(--color-border-primary, light-dark(#d5d5d5, #535353));
+      --action: var(--color-background-inverse, light-dark(#202020, #f1f1f1));
+      --action-text: var(--color-text-inverse, light-dark(#fff, #202020));
+      --error: var(--color-text-danger, light-dark(#a62924, #ff9993));
+      font: 14px/1.5 var(--font-sans, system-ui, sans-serif);
+      color: var(--text);
+    }
+    :root[data-theme="light"] { color-scheme: light; }
+    :root[data-theme="dark"] { color-scheme: dark; }
+    [hidden] { display: none !important; }
+    body { padding: 16px 20px 20px; margin: 0; }
+    main { max-width: 34rem; margin-inline: auto; }
+    h1 { margin: 0 0 4px; font-size: 1.2rem; line-height: 1.35; font-weight: 650; }
+    p { margin: 0; }
+    .help { color: var(--muted); }
+    fieldset { display: grid; gap: 14px; margin: 14px 0 0; padding: 0; border: 0; min-width: 0; }
+    .field { display: grid; gap: 4px; }
+    label { font-weight: 600; }
+    input, button { font: inherit; }
+    input[type="url"], input[type="password"] {
+      box-sizing: border-box; width: 100%; min-width: 0; padding: 8px 10px;
+      border: 1px solid var(--border); border-radius: 8px; background: var(--field); color: var(--text);
+    }
+    input::placeholder { color: var(--muted); }
+    .confirm { display: flex; align-items: flex-start; gap: 8px; font-weight: 400; }
+    .confirm input { margin-top: 4px; flex: none; }
+    button {
+      justify-self: start; padding: 7px 14px; border: 1px solid transparent; border-radius: 999px;
+      background: var(--action); color: var(--action-text); font-weight: 650; cursor: pointer;
+    }
+    button:disabled { cursor: default; opacity: .55; }
+    :focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+    #status { margin-top: 10px; overflow-wrap: anywhere; }
+    #status:empty { display: none; }
+    #status.error { color: var(--error); }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>连接 Cat_two</h1>
+    <p class="help">在 Cat_two 的「设置 → MCP 和 API」中创建令牌。</p>
+    <form autocomplete="off" method="post">
+      <fieldset id="fields" disabled>
+        <div class="field">
+          <label for="endpoint">Cat_two 应用网址或 MCP 地址</label>
+          <input id="endpoint" type="url" placeholder="http://localhost:5230" maxlength="2048" required>
+        </div>
+        <div class="field">
+          <label for="token">MCP 访问令牌</label>
+          <input id="token" type="password" maxlength="1024" autocomplete="new-password" spellcheck="false"
+            aria-describedby="token-help" required>
+          <p id="token-help" class="help">可粘贴原始令牌或完整的 Authorization 值。</p>
+        </div>
+        <label id="http-confirm" class="confirm" hidden>
+          <input id="allow-http" type="checkbox">
+          <span>我确认在可信网络中使用 HTTP。令牌会以明文传输。</span>
+        </label>
+        <button type="button">保存连接</button>
+      </fieldset>
+    </form>
+    <p id="status" role="status" aria-live="polite">正在读取本机设置…</p>
+  </main>
+  <script>
+    const form = document.querySelector("form");
+    const fields = document.getElementById("fields");
+    const endpoint = document.getElementById("endpoint");
+    const token = document.getElementById("token");
+    const tokenHelp = document.getElementById("token-help");
+    const httpConfirm = document.getElementById("http-confirm");
+    const allowHttp = document.getElementById("allow-http");
+    const status = document.getElementById("status");
+    const save = form.querySelector("button");
+
+    const parentHost = window.parent;
+    const pending = new Map();
+    let nextId = 1;
+    let watchingSize;
+    let closing = false;
+
+    function send(message) {
+      // Hosts can use a sandbox proxy with an opaque origin. Check its window on receive.
+      parentHost.postMessage({ jsonrpc: "2.0", ...message }, "*");
+    }
+
+    function request(method, params) {
+      const id = nextId++;
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error("MCP App request timed out"));
+        }, 10000);
+        pending.set(id, { resolve, reject, timeout });
+        send({ id, method, params });
+      });
+    }
+
+    function applyHostContext(context) {
+      const root = document.documentElement;
+      if (context?.theme === "light" || context?.theme === "dark") root.dataset.theme = context.theme;
+      const variables = context?.styles?.variables;
+      for (const property of ["--font-sans", "--color-text-primary", "--color-text-secondary",
+        "--color-text-inverse", "--color-text-danger", "--color-background-secondary",
+        "--color-background-inverse", "--color-border-primary"]) {
+        if (typeof variables?.[property] === "string") root.style.setProperty(property, variables[property]);
+      }
+    }
+
+    window.addEventListener("message", (event) => {
+      const message = event.data;
+      if (event.source !== parentHost || message?.jsonrpc !== "2.0") return;
+      if (message.method === "ui/notifications/host-context-changed") {
+        applyHostContext(message.params);
+      } else if (message.method === "ui/resource-teardown" || message.method === "ping") {
+        if (message.method === "ui/resource-teardown") {
+          closing = true;
+          token.value = "";
+          fields.disabled = true;
+          watchingSize?.disconnect();
+          for (const waiter of pending.values()) {
+            clearTimeout(waiter.timeout);
+            waiter.reject(new Error("MCP App closed"));
+          }
+          pending.clear();
+        }
+        if (message.id !== undefined) send({ id: message.id, result: {} });
+      } else if (message.method === undefined) {
+        const waiter = pending.get(message.id);
+        if (!waiter) return;
+        pending.delete(message.id);
+        clearTimeout(waiter.timeout);
+        if (message.error) waiter.reject(new Error("MCP App request failed"));
+        else waiter.resolve(message.result);
+      }
+    });
+
+    function setStatus(message, error = false) {
+      status.textContent = message;
+      status.classList.toggle("error", error);
+    }
+
+    function syncHttp() {
+      const isHttp = /^http:\/\//i.test(endpoint.value.trim());
+      httpConfirm.hidden = !isHttp;
+      allowHttp.required = isHttp;
+      if (!isHttp) allowHttp.checked = false;
+    }
+
+    function showState(state) {
+      if (typeof state?.endpoint !== "string" || typeof state?.configured !== "boolean") {
+        throw new Error("Invalid Cat_two settings state");
+      }
+      endpoint.value = state.endpoint;
+      token.required = !state.configured;
+      if (state.configured) tokenHelp.textContent = "地址不变时可留空，继续使用已保存的令牌。";
+      syncHttp();
+    }
+
+    endpoint.addEventListener("input", () => {
+      syncHttp();
+      setStatus("");
+    });
+    token.addEventListener("input", () => setStatus(""));
+
+    form.addEventListener("submit", (event) => event.preventDefault());
+    form.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.isComposing && (event.target === endpoint || event.target === token)) {
+        event.preventDefault();
+        save.click();
+      }
+    });
+
+    save.addEventListener("click", async () => {
+      if (fields.disabled || !form.reportValidity()) return;
+      fields.disabled = true;
+      setStatus("正在保存…");
+      try {
+        const response = request("tools/call", {
+          name: "cat_two_setup_save",
+          arguments: { endpoint: endpoint.value.trim(), token: token.value, allowHttp: allowHttp.checked },
+        });
+        token.value = "";
+        const result = await response;
+        if (result?.isError || result?.structuredContent?.configured !== true) throw new Error("Save failed");
+        showState(result.structuredContent);
+        setStatus("连接设置已保存在本机。");
+      } catch {
+        if (!closing) setStatus("未保存，请检查地址和令牌。更换地址时请重新填写令牌。", true);
+      } finally {
+        fields.disabled = closing;
+      }
+    });
+
+    async function start() {
+      if (parentHost === window) {
+        setStatus("请在 Codex 中打开连接设置。", true);
+        return;
+      }
+      try {
+        const initialized = await request("ui/initialize", {
+          protocolVersion: "2026-01-26",
+          appInfo: { name: "Cat_two Connection", version: "1.0.0" },
+          appCapabilities: { availableDisplayModes: ["inline"] },
+        });
+        applyHostContext(initialized?.hostContext);
+        send({ method: "ui/notifications/initialized" });
+        let lastHeight = 0;
+        watchingSize = new ResizeObserver(() => {
+          const height = Math.ceil(document.body.getBoundingClientRect().height);
+          if (height !== lastHeight) {
+            lastHeight = height;
+            send({ method: "ui/notifications/size-changed", params: { height } });
+          }
+        });
+        watchingSize.observe(document.body);
+        const result = await request("tools/call", { name: "cat_two_setup_state", arguments: {} });
+        if (result?.isError) throw new Error("Settings unavailable");
+        showState(result?.structuredContent);
+        fields.disabled = false;
+        setStatus("");
+      } catch {
+        if (!closing) setStatus("无法加载连接设置，请关闭后重新打开。", true);
+      }
+    }
+
+    start();
+  </script>
+</body>
+</html>

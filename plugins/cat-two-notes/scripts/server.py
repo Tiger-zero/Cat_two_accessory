@@ -10,11 +10,13 @@ from urllib.error import HTTPError
 from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from settings import NotConfigured, SettingsError, configure, load_settings
+from settings import (
+    NotConfigured, SettingsError, configure, connection_form_state, load_settings, save_connection_form,
+)
 from setup_web import SetupWeb
 
 
-SERVER_INFO = {"name": "cat-two-notes", "version": "1.2.0"}
+SERVER_INFO = {"name": "cat-two-notes", "version": "1.3.0"}
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 NOTES_TOOLS = {
     "auth_get_current_user",
@@ -28,19 +30,51 @@ NOTES_TOOLS = {
     "memo_create_memo",
     "memo_update_memo",
 }
-SETUP_HELP = "调用 cat_two_open_setup 获取本机配置页面，在浏览器中填写 Cat_two 地址和 MCP 令牌。"
+SETUP_HELP = "请调用 cat_two_open_setup，在 Cat_two 连接窗口中填写地址和 MCP 令牌。"
+SETUP_RESOURCE = {
+    "uri": "ui://cat-two-notes/setup.html",
+    "name": "Cat_two 连接设置",
+    "mimeType": "text/html;profile=mcp-app",
+}
 STATUS_TOOL = {
     "name": "cat_two_connection_status",
-    "description": "检查本地 Cat_two 配置和当前账号。首次连接时返回本机配置页链接。",
+    "description": "检查本地 Cat_two 配置和当前账号。尚未配置时提示打开连接窗口。",
     "inputSchema": {"type": "object", "additionalProperties": False},
     "annotations": {"readOnlyHint": True, "openWorldHint": True},
 }
 SETUP_TOOL = {
     "name": "cat_two_open_setup",
     "title": "添加或修改服务端",
-    "description": "应用户要求打开本机浏览器的 Cat_two 配置页，用于首次连接或更换地址和令牌。令牌仅在配置页填写。",
+    "description": "打开 Cat_two 内嵌连接窗口，用于首次设置或更换地址和令牌。请在窗口内输入令牌。",
     "inputSchema": {"type": "object", "additionalProperties": False},
     "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    "_meta": {
+        "ui": {"resourceUri": SETUP_RESOURCE["uri"]},
+        "openai/ui": {"preferredModelDisplayMode": "inline"},
+    },
+}
+SETUP_STATE_TOOL = {
+    "name": "cat_two_setup_state",
+    "description": "给连接窗口读取已保存的服务端地址。",
+    "inputSchema": {"type": "object", "additionalProperties": False},
+    "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    "_meta": {"ui": {"visibility": ["app"]}},
+}
+SETUP_SAVE_TOOL = {
+    "name": "cat_two_setup_save",
+    "description": "保存连接窗口提交的本机设置。保存时不连接服务端。",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "endpoint": {"type": "string", "maxLength": 2048},
+            "token": {"type": "string", "maxLength": 1024},
+            "allowHttp": {"type": "boolean"},
+        },
+        "required": ["endpoint", "token", "allowHttp"],
+        "additionalProperties": False,
+    },
+    "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": False},
+    "_meta": {"ui": {"visibility": ["app"]}},
 }
 SETTINGS_READ_TOOL = {
     "name": "cat_two_settings_read",
@@ -198,19 +232,6 @@ class Remote:
         return name
 
 
-def verify(endpoint, token):
-    remote = Remote(endpoint, token)
-    remote.connect()
-    return remote.account()
-
-
-def verify_setup(endpoint, token):
-    try:
-        return verify(endpoint, token)
-    except CatTwoError as error:
-        raise SettingsError(str(error)) from None
-
-
 def launch_browser(url):
     try:
         # A browser launcher may write to its inherited streams. Keep that output off MCP stdio.
@@ -227,14 +248,17 @@ def launch_browser(url):
         pass
 
 
-def setup_browser():
+def marketplace_install_url():
     plugin_parent = Path(__file__).resolve().parent.parent.parent
     marketplace = plugin_parent.parent / ".agents" / "plugins" / "marketplace.json"
-    install_url = None
     if plugin_parent.name == "plugins" and marketplace.is_file():
         marketplace_path = quote(str(marketplace), safe="")
-        install_url = f"codex://plugins/cat-two-notes?marketplacePath={marketplace_path}"
-    setup = SetupWeb(verify_setup, install_url=install_url)
+        return f"codex://plugins/cat-two-notes?marketplacePath={marketplace_path}"
+    return None
+
+
+def setup_browser():
+    setup = SetupWeb(install_url=marketplace_install_url())
     url = setup.open()
     print("请在浏览器中填写 Cat_two 地址和 MCP 令牌。", flush=True)
     print("如果浏览器没有自动打开，请在本机浏览器中打开以下链接。", flush=True)
@@ -256,7 +280,6 @@ def status_result(data, is_error=False, text=None):
 class LocalServer:
     def __init__(self):
         self.remote = None
-        self.setup = SetupWeb(verify_setup)
 
     def get_remote(self):
         endpoint, token = load_settings()
@@ -267,27 +290,12 @@ class LocalServer:
         return self.remote
 
     def list_tools(self):
-        tools = [STATUS_TOOL, SETUP_TOOL, SETTINGS_READ_TOOL, SETTINGS_UPDATE_TOOL]
+        tools = [STATUS_TOOL, SETUP_TOOL, SETUP_STATE_TOOL, SETUP_SAVE_TOOL, SETTINGS_READ_TOOL, SETTINGS_UPDATE_TOOL]
         try:
             tools.extend(self.get_remote().list_tools())
         except (SettingsError, CatTwoError):
             self.remote = None
         return {"tools": tools}
-
-    def open_setup(self, open_browser=False, **status):
-        try:
-            url = self.setup.open()
-        except SettingsError as error:
-            return status_result({**status, "message": str(error)}, is_error=True, text=str(error))
-        message = "请在运行 Codex 的同一台电脑上打开此链接，在网页中填写 Cat_two 地址和 MCP 令牌。"
-        if open_browser:
-            threading.Thread(target=launch_browser, args=(url,), daemon=True).start()
-            message = "正在打开本机配置页。如果浏览器没有打开，请手动访问以下地址。"
-        return status_result({
-            **status,
-            "setupUrl": url,
-            "message": message,
-        }, text=f"{message}\n{url}" if open_browser else None)
 
     def call(self, params):
         name = params.get("name")
@@ -297,7 +305,20 @@ class LocalServer:
         if name == SETUP_TOOL["name"]:
             if arguments:
                 return status_result({"message": "本机配置工具无需参数。"}, is_error=True)
-            return self.open_setup(open_browser=True)
+            message = "请在连接窗口中填写 Cat_two 服务端地址和 MCP 令牌。"
+            return status_result({"message": message}, text=message)
+        if name == SETUP_STATE_TOOL["name"]:
+            if arguments:
+                return status_result({"message": "读取连接设置无需参数。"}, is_error=True)
+            return {"content": [], "structuredContent": connection_form_state()}
+        if name == SETUP_SAVE_TOOL["name"]:
+            if arguments.keys() != {"endpoint", "token", "allowHttp"}:
+                return status_result({"message": "请填写 Cat_two 地址和 MCP 令牌。"}, is_error=True)
+            try:
+                settings = save_connection_form(arguments["endpoint"], arguments["token"], arguments["allowHttp"])
+            except SettingsError as error:
+                return status_result({"message": str(error)}, is_error=True, text=str(error))
+            return {"content": [], "structuredContent": settings}
         if name == SETTINGS_READ_TOOL["name"]:
             if arguments:
                 return status_result({"message": "读取连接设置无需参数。"}, is_error=True)
@@ -310,7 +331,7 @@ class LocalServer:
                     "items": [{
                         "kind": "tool",
                         "tool": SETUP_TOOL["name"],
-                        "description": "在本机浏览器填写服务端地址和 MCP 令牌。",
+                        "description": "在连接窗口填写服务端地址和 MCP 令牌。",
                     }],
                 }],
             }}
@@ -331,11 +352,9 @@ class LocalServer:
                 })
             return remote.call(name, arguments)
         except NotConfigured:
-            if name == STATUS_TOOL["name"]:
-                return self.open_setup(configured=False, connected=False)
             return status_result({
                 "configured": False, "connected": False, "message": SETUP_HELP,
-            }, is_error=True)
+            }, is_error=name != STATUS_TOOL["name"])
         except (SettingsError, CatTwoError) as error:
             self.remote = None
             return status_result({
@@ -358,6 +377,7 @@ class LocalServer:
                 "protocolVersion": version if version in PROTOCOLS else PROTOCOLS[0],
                 "capabilities": {
                     "tools": {},
+                    "resources": {},
                     "extensions": SETTINGS_CAPABILITIES,
                     "experimental": SETTINGS_CAPABILITIES,
                 },
@@ -369,6 +389,22 @@ class LocalServer:
             result = self.list_tools()
         elif method == "tools/call":
             result = self.call(params)
+        elif method == "resources/list":
+            result = {"resources": [SETUP_RESOURCE]}
+        elif method == "resources/templates/list":
+            result = {"resourceTemplates": []}
+        elif method == "resources/read" and params.get("uri") == SETUP_RESOURCE["uri"]:
+            path = Path(__file__).resolve().parent.parent / "assets" / "setup.html"
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                return {"id": request_id, "error": {"code": -32603, "message": "Setup resource unavailable"}}
+            result = {"contents": [{
+                "uri": SETUP_RESOURCE["uri"],
+                "mimeType": SETUP_RESOURCE["mimeType"],
+                "text": content,
+                "_meta": {"ui": {"csp": {}}},
+            }]}
         else:
             return {"id": request_id, "error": {"code": -32601, "message": "Method not found"}}
         return {"id": request_id, "result": result}
@@ -392,11 +428,15 @@ def main():
         return 0
     try:
         if args == ["configure"]:
-            configure(verify)
+            configure()
         elif args == ["setup-browser"]:
             setup_browser()
+        elif args == ["setup-window"]:
+            from setup_window import run_setup_window
+
+            return run_setup_window(marketplace_install_url())
         else:
-            print("Usage: python3 -B server.py [configure | setup-browser]", file=sys.stderr)
+            print("Usage: python3 -B server.py [configure | setup-browser | setup-window]", file=sys.stderr)
             return 2
         return 0
     except (SettingsError, CatTwoError) as error:

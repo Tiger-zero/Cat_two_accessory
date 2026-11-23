@@ -8,7 +8,7 @@ set "CAT_TWO_SERVER=%CAT_TWO_PLUGIN%\scripts\server.py"
 if not exist "%CAT_TWO_PYTHON%" goto :missing
 if not exist "%CAT_TWO_SERVER%" goto :missing
 
-"%CAT_TWO_PYTHON%" -X utf8 -E -s -B "%CAT_TWO_SERVER%" setup-browser
+"%CAT_TWO_PYTHON%" -X utf8 -E -s -B "%CAT_TWO_SERVER%" setup-window
 set "CAT_TWO_EXIT=%ERRORLEVEL%"
 if "%CAT_TWO_EXIT%"=="0" exit /b 0
 

@@ -14,7 +14,7 @@ description: 在 Cat_two_accessory 仓库开发和维护 Cat_two 的 Codex 本�
 ## 本地配置和凭据
 
 1. `scripts/server.py` 作为 `cat_two_local` 的 stdio MCP 进程运行，使用 Python 3.9 及以上的标准库。标准输出只写 MCP JSON 消息，诊断信息使用标准错误并省略令牌。
-2. `cat_two_connection_status` 在首次连接时返回 `setupUrl`，`cat_two_open_setup` 打开本机浏览器。插件设置页通过 `openai/settings` 注册「添加或修改服务端」操作。设置读写工具只处理界面结构，地址和令牌在 `scripts/setup_web.py` 的独立表单输入。该表单绑定 `127.0.0.1`，以随机路径接收同源 POST，令牌使用密码框。首次配置和更换凭据先调用上游 `auth_get_current_user`，验证成功才保存。检查失败后的重试和保存后监听关闭行为。[插件设置规范](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md#structured-settings)
+2. `cat_two_open_setup` 在引导聊天中展示 `ui://cat-two-notes/setup.html` 界面，插件设置页通过 `openai/settings` 用同一操作显示弹窗。`cat_two_setup_state` 与 `cat_two_setup_save` 只供界面调用。令牌不得进入工具结果、模型上下文或日志。`settings.py` 执行本地格式检查并原子保存，实际连接由后续 `cat_two_connection_status` 或笔记操作触发。[插件设置规范](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md#structured-settings)
 3. `scripts/settings.py` 处理 URL、令牌和连接文件。支持可达的 Docker 应用地址（默认映射端口 5230）或完整 MCP 地址，规范化时保留反代子路径。接受原始 MCP 令牌和复制的 `Authorization: Bearer …`。通过 HTTP 访问需要用户确认。
 4. 用户从 Cat_two「设置 → MCP 和 API」签发 MCP 令牌。仓库、ZIP、日志和对话中都应避免记录真实令牌。当前设置用原子替换写入 `~/.cat-two-codex/connection.json`，在 POSIX 上检查文件所有者和访问权限。验证失败时保留之前的设置。终端备用入口和撤销令牌方式见 [README](../../../README.md#首次连接)。
 
@@ -29,5 +29,5 @@ description: 在 Cat_two_accessory 仓库开发和维护 Cat_two 的 Codex 本�
 1. 在仓库根目录执行 `codex plugin marketplace add .` 和 `codex plugin add cat-two-notes@cat-two-accessory`。更新源目录后用 Codex 的重新安装流程刷新缓存。检查 `codex plugin list` 和桌面端 `@Cat_two` 入口。[Codex 插件文档](https://developers.openai.com/plugins/build/plugins)
 2. 在隔离的本机配置和测试 Cat_two 实例中验证未配置状态、配置页成功和失败路径、已配置账号、工具发现，以及只读查询。使用测试令牌覆盖权限差异。页面验证至少覆盖 HTTP 确认、错误令牌重试、跨源 POST 拒绝、无令牌回显和保存后失效。若 Codex 会话仍使用初始工具列表，新建本地会话复验。
 3. 用 `python3 -B scripts/build_release.py --platform all --format both` 构建两种 ZIP 和 SHA-256 校验文件，或用 `--platform windows-x64 --format plugin` 构建指定的单插件包。构建器按固定摘要校验 CPython 分发包，并将 MCP 启动命令指向包内运行时。
-4. 校验 `-plugin.zip` 根目录的 `plugin.json`、`mcp.json`、技能、图标、脚本和运行时。市场 ZIP 中的市场清单应指向完整插件目录。Windows 市场包根目录应包含 `setup-cat-two.cmd`。验证启动器可在没有已加载 MCP 工具的情况下打开本机页面，保存后通过 `marketplacePath` 深度链接打开桌面版安装页。用解压后的产物验证 Codex 能启动随包运行时，检查运行时许可。新增插件文件时检查打包清单。
+4. 校验 `-plugin.zip` 根目录的 `plugin.json`、`mcp.json`、技能、界面资源、脚本和运行时。市场 ZIP 中的市场清单应指向完整插件目录。Windows 市场包根目录应包含 `setup-cat-two.cmd`。验证启动器可用随包 Tkinter 打开本机表单并离线保存，安装按钮通过 `marketplacePath` 打开桌面版安装页。解压实际发布包验证 Codex 能读取内嵌资源并启动随包 MCP。新增插件文件时检查打包清单。
 5. 按 [README](../../../README.md#构建发布包) 和 [Release 工作流](../../../.github/workflows/release.yml) 核对两份插件清单、`server.py` 版本、标签与 ZIP 文件名。手动构建可从 Actions 获取制品，推送版本标签则发布到 GitHub Release。发布后核对 [GitHub Releases](https://github.com/Tiger-zero/Cat_two_accessory/releases) 上的 ZIP 和校验文件。

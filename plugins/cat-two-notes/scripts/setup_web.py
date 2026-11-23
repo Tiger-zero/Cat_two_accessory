@@ -9,7 +9,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
-from settings import SettingsError, _normalize_endpoint, _save_settings, load_settings, parse_token
+from settings import SettingsError, connection_form_state, save_connection_form
 
 
 SETUP_LIFETIME = 10 * 60
@@ -39,7 +39,6 @@ STYLE = """
   a { color: light-dark(#21664b, #9be0ba); }
   :focus-visible { outline: 2px solid light-dark(#21664b, #9be0ba); outline-offset: 2px; }
   .error { color: light-dark(#912e29, #ffc1b9); }
-  .account { overflow-wrap: anywhere; }
 """
 
 FORM = """
@@ -53,23 +52,15 @@ FORM = """
     <p id="token-hint" class="field-help">{token_hint}</p>
     <label class="check"><input type="checkbox" name="allow_http" value="yes">
       <span>仅在可信网络中使用 HTTP。HTTP 会以明文传输令牌。</span></label>
-    <button type="submit">验证并保存连接</button>
+    <button type="submit">保存连接</button>
   </form>
 """
-
-
-def _saved_connection():
-    try:
-        return load_settings()
-    except SettingsError:
-        return None
 
 
 class SetupWeb:
     """Open or reuse a private setup URL on the current user's machine."""
 
-    def __init__(self, verify, install_url=None):
-        self.verify = verify
+    def __init__(self, install_url=None):
         self.install_url = install_url
         self._lock = threading.Lock()
         self._server = None
@@ -102,19 +93,13 @@ class SetupWeb:
         with self._lock:
             return server.saved
 
-    def _save(self, server, endpoint, token, *, reuse_token):
-        account = self.verify(endpoint, token)
+    def _save(self, server, endpoint, token, allow_http):
         with self._lock:
             if self._server is not server or not server.active():
                 raise SettingsError("配置页已过期，请重新打开配置页。")
-            if reuse_token:
-                # A check with the old token must never overwrite a concurrent update.
-                if _saved_connection() != (endpoint, token):
-                    raise SettingsError("本机连接已更改，请检查地址和令牌后重试。")
-            else:
-                _save_settings(endpoint, token)
+            result = save_connection_form(endpoint, token, allow_http)
             server.saved = True
-        return account
+        return result
 
 
 class _SetupServer(HTTPServer):
@@ -215,7 +200,6 @@ class _SetupHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST)
             return
 
-        token = ""
         try:
             body = self.rfile.read(int(length[0]))
             if len(body) != int(length[0]):
@@ -225,46 +209,29 @@ class _SetupHandler(BaseHTTPRequestHandler):
                 strict_parsing=True, errors="strict", max_num_fields=3,
             )
             address, = fields["url"]
-            value, = fields["token"]
-            endpoint = _normalize_endpoint(address.strip())
-            reuse_token = not value.strip()
-            if reuse_token:
-                saved = _saved_connection()
-                if saved is None:
-                    raise SettingsError("请输入 MCP 访问令牌。")
-                saved_endpoint, token = saved
-                if endpoint != saved_endpoint:
-                    raise SettingsError("更改 Cat_two 地址后需要重新填写 MCP 访问令牌。")
-            else:
-                token = parse_token(value)
-            if endpoint.startswith("http://") and fields.get("allow_http") != ["yes"]:
-                raise SettingsError("请选择 HTTPS 地址，或确认在可信网络中使用 HTTP。")
-            account = self.server.owner._save(self.server, endpoint, token, reuse_token=reuse_token)
+            token, = fields["token"]
+            saved = self.server.owner._save(self.server, address, token, fields.get("allow_http") == ["yes"])
         except (KeyError, ValueError, OSError):
             self._form("无法读取连接设置，请重新输入。")
         except SettingsError as error:
-            self._form(str(error).replace(token, "[已隐藏]") if token else str(error))
+            self._form(str(error))
         else:
-            account = html.escape(account.replace(token, "[已隐藏]")[:512])
             install_url = self.server.owner.install_url
             install_link = (
                 f'<p><a href="{html.escape(install_url)}">在 Codex 中安装本地插件</a></p>'
                 if install_url else ""
             )
-            self._page(HTTPStatus.OK, "已连接 Cat_two", (
-                f'<p class="account">当前账号 <strong>{account}</strong></p>'
-                '<p>连接已保存在本机。请新开一个 Codex 会话来加载笔记工具。</p>' + install_link
+            self._page(HTTPStatus.OK, "配置已保存", (
+                f'<p>{html.escape(saved["message"])}</p>' + install_link
             ))
 
     def _form(self, message=None):
-        saved = _saved_connection()
-        endpoint = ""
-        if saved is not None and saved[1] not in saved[0]:
-            endpoint = saved[0]
+        state = connection_form_state()
+        configured = state["configured"]
         form = FORM.format(
-            endpoint=html.escape(endpoint),
-            token_required="" if saved else " required",
-            token_hint=("地址不变时可留空，继续使用已保存的令牌。" if saved else "可粘贴令牌或完整的 Authorization 值。"),
+            endpoint=html.escape(state["endpoint"]),
+            token_required="" if configured else " required",
+            token_hint=("地址不变时可留空，继续使用已保存的令牌。" if configured else "可粘贴令牌或完整的 Authorization 值。"),
         )
         status = HTTPStatus.OK
         if message is not None:

@@ -7,7 +7,7 @@ description: 查询和整理 Cat_two 笔记，汇总知识或待办，并在预�
 
 ## 连接
 
-使用插件提供的 `cat_two_local` MCP 连接。首次使用、需要检查连接或笔记工具不可用时，先调用 `cat_two_connection_status`。若状态返回 `setupUrl`，直接把链接提供给用户。重新配置时调用 `cat_two_open_setup`。缺少连接工具时，使用同一插件的 `cat-two-setup` 技能中的本地配置入口。[安装与首次连接](https://github.com/Tiger-zero/Cat_two_accessory#首次连接)
+使用插件提供的 `cat_two_local` MCP 连接。首次查询、需要检查连接或笔记工具不可用时，先调用 `cat_two_connection_status`。如尚未配置或用户需要更改连接，调用 `cat_two_open_setup` 显示内嵌表单。缺少连接工具时，使用同一插件的 `cat-two-setup` 技能中的本地配置入口。[安装与首次连接](https://github.com/Tiger-zero/Cat_two_accessory#首次连接)
 
 开始读取或写入前，调用 `auth_get_current_user` 确认账号。若连接或鉴权失败，说明当前工具返回的状态，请用户核对实例可达性、网址和令牌后重试。
 

@@ -9,7 +9,6 @@ import sys
 import tempfile
 import warnings
 from pathlib import Path
-from typing import Callable
 from urllib.parse import urlsplit, urlunsplit
 
 
@@ -86,7 +85,7 @@ def load_settings() -> tuple[str, str]:
             raise SettingsError("Cat_two 连接配置格式有误，请重新配置。")
         return _normalize_endpoint(values.get("endpoint")), _validate_token(values.get("token"))
     except FileNotFoundError:
-        raise NotConfigured("尚未配置 Cat_two 连接，请在本机终端运行首次配置命令。") from None
+        raise NotConfigured("尚未配置 Cat_two 连接，请打开连接设置。") from None
     except (OSError, ValueError):
         raise SettingsError("无法读取 Cat_two 连接配置，请重新配置。") from None
 
@@ -116,13 +115,53 @@ def _save_settings(endpoint: str, token: str) -> None:
         raise SettingsError("无法保存 Cat_two 连接配置，请检查用户目录的写入权限。") from None
 
 
-def configure(verify: Callable[[str, str], str]) -> None:
-    """Prompt for a connection, verify the account, and then save it."""
+def connection_form_state() -> dict:
+    """Return the saved address and whether a token exists, without returning the token."""
+    try:
+        endpoint, token = load_settings()
+    except SettingsError:
+        return {"endpoint": "", "configured": False}
+    return {"endpoint": "" if token in endpoint else endpoint, "configured": True}
+
+
+def save_connection_form(endpoint: str, token: str, allow_http: bool) -> dict:
+    """Save syntactically valid settings without connecting to Cat_two."""
+    if (
+        not isinstance(endpoint, str) or len(endpoint) > 2048
+        or not isinstance(token, str) or len(token) > 1024
+        or not isinstance(allow_http, bool)
+    ):
+        raise SettingsError("请填写 Cat_two 地址和 MCP 令牌。")
+    endpoint = _normalize_endpoint(endpoint.strip())
+    if endpoint.startswith("http://") and not allow_http:
+        raise SettingsError("请选择 HTTPS 地址，或确认在可信网络中使用 HTTP。")
+
+    if token.strip():
+        token = parse_token(token)
+        _save_settings(endpoint, token)
+    else:
+        try:
+            previous_endpoint, token = load_settings()
+        except SettingsError:
+            raise SettingsError("请输入 MCP 访问令牌。") from None
+        if endpoint != previous_endpoint:
+            raise SettingsError("更改 Cat_two 地址后需要重新填写 MCP 访问令牌。")
+
+    return {
+        "endpoint": "" if token in endpoint else endpoint,
+        "configured": True,
+        "message": "配置已保存。首次查询笔记时将连接 Cat_two。",
+    }
+
+
+def configure() -> None:
+    """Prompt for a connection and save it locally."""
     if not sys.stdin.isatty():
         raise SettingsError("请在本机交互式终端运行配置命令。")
 
     endpoint = _normalize_endpoint(input("Cat_two 应用网址或 MCP 服务地址: ").strip())
-    if endpoint.startswith("http://"):
+    allow_http = endpoint.startswith("http://")
+    if allow_http:
         print("HTTP 会在网络上传输未加密的令牌。能通过 HTTPS 访问时，请使用 HTTPS。")
         if input("确认在可信网络中使用 HTTP？[y/N] ").strip().lower() not in {"y", "yes"}:
             raise SettingsError("已取消连接配置。")
@@ -130,11 +169,8 @@ def configure(verify: Callable[[str, str], str]) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error", getpass.GetPassWarning)
         try:
-            token = parse_token(getpass.getpass("Cat_two MCP 令牌（输入不会显示）: "))
+            token = getpass.getpass("Cat_two MCP 令牌（输入不会显示）: ")
         except getpass.GetPassWarning:
             raise SettingsError("此终端无法隐藏输入。请换用本机交互式终端。") from None
 
-    account = verify(endpoint, token)
-    _save_settings(endpoint, token)
-    display_account = json.dumps(account.replace(token, "[已隐藏]"), ensure_ascii=False)
-    print(f"已连接 Cat_two 账号 {display_account}，并保存本机配置。")
+    print(save_connection_form(endpoint, token, allow_http)["message"])
