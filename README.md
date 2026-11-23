@@ -4,9 +4,17 @@
 
 ## 安装
 
-需要支持本地插件的 Codex、Python 3.9 或更高版本，以及一台能访问 Cat_two 的电脑。请确认在该电脑上运行 `python3 --version` 和 `codex --version` 都有输出。
+需要支持本地插件的 Codex，以及一台能访问 Cat_two 的电脑。发布 ZIP 已包含运行时，由 Codex 自动启动。安装时无需另外安装 Python、构建代码或启动 MCP 服务。
 
-从 [GitHub Releases](https://github.com/Tiger-zero/Cat_two_accessory/releases) 下载 `cat-two-notes-1.0.0.zip` 并解压。进入解压出的 `cat-two-notes-1.0.0` 目录，在终端运行以下命令。用 Git 克隆仓库的用户也可以在仓库根目录运行相同命令。
+从 [GitHub Releases](https://github.com/Tiger-zero/Cat_two_accessory/releases) 下载与系统和架构对应的 ZIP。文件名为 `cat-two-notes-版本-平台.zip`。
+
+| 系统 | x64（Intel 或 AMD） | ARM64 |
+| --- | --- | --- |
+| Windows | `windows-x64` | `windows-arm64` |
+| macOS | `macos-x64` | `macos-arm64`（Apple 芯片） |
+| Linux（glibc） | `linux-x64` | `linux-arm64` |
+
+解压 ZIP，进入包含 `.agents` 和 `plugins` 的目录。Codex 的本地插件入口接收该目录。在终端运行以下命令注册目录和安装插件。
 
 ```sh
 codex plugin marketplace add .
@@ -24,10 +32,16 @@ codex plugin add cat-two-notes@cat-two-accessory
 
 更换地址或令牌时，可以在聊天中选择插件并发送「重新配置 Cat_two」。配置保存在当前用户目录下的 `~/.cat-two-codex/connection.json`。该文件在 macOS 和 Linux 上仅当前用户可读写，令牌以明文保存在文件中，避免提交或分享该文件。撤销令牌请在 Cat_two 的「MCP 和 API」中操作。
 
-如果本机配置页无法打开，请在已解压的发布目录或仓库根目录运行终端配置命令。该命令会隐藏令牌输入。
+如果本机配置页无法打开，可以在解压后的目录用包内运行时配置。命令会隐藏令牌输入。
 
 ```sh
-python3 -B plugins/cat-two-notes/scripts/server.py configure
+./plugins/cat-two-notes/runtime/bin/python3 -B plugins/cat-two-notes/scripts/server.py configure
+```
+
+Windows PowerShell 使用以下命令。
+
+```powershell
+.\plugins\cat-two-notes\runtime\python.exe -B .\plugins\cat-two-notes\scripts\server.py configure
 ```
 
 ## 在 Codex 中使用
@@ -40,4 +54,6 @@ python3 -B plugins/cat-two-notes/scripts/server.py configure
 
 ## 构建发布包
 
-在源码仓库根目录运行 `python3 -B scripts/build_release.py`。`dist/` 会生成可直接解压安装的 ZIP 和对应的 SHA-256 校验文件。
+- 从 GitHub **Actions → Build Codex plugin ZIPs → Run workflow** 手动构建。运行成功后，在该次运行的 **Artifacts** 中下载 `cat-two-notes-platform-packages`，从其中取出对应平台的 ZIP。
+- 发布时同步更新两份插件清单和 `server.py` 的版本号，再推送同版本标签（如 `v1.1.0`）。工作流构建并校验所有平台 ZIP 后，将 ZIP 和 SHA-256 文件发布到该标签的 Release。[构建与发布工作流](.github/workflows/release.yml)
+- 开发者可以从仓库目录安装源码版，Codex 会使用系统的 `python3`（3.9 或更新版本）。也可以运行 `python3 -B scripts/build_release.py --platform all` 在 `dist/` 复现发布包，或用 `--platform linux-x64` 等值只构建一个平台。[开发 Skill](.agents/skills/cat-two-plugin-development/SKILL.md)

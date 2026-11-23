@@ -1,31 +1,77 @@
-name: Release Codex plugin
+name: Build Codex plugin ZIPs
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: codex-plugin-${{ github.ref }}
 
 jobs:
-  release:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Build and verify ZIP
+      - name: Build and verify platform ZIPs
         run: |
-          python3 -B scripts/build_release.py
-          cd dist
-          sha256sum --check "cat-two-notes-${GITHUB_REF_NAME#v}.zip.sha256"
+          version=$(python3 -c 'import json; print(json.load(open("plugins/cat-two-notes/plugin.json"))["version"])')
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "v$version"
+          fi
+          python3 -B scripts/build_release.py --platform all
+          (cd dist && sha256sum --check ./*.zip.sha256)
+          smoke_dir=$(mktemp -d)
+          unzip -q "dist/cat-two-notes-$version-linux-x64.zip" -d "$smoke_dir"
+          plugin="$smoke_dir/cat-two-notes-$version-linux-x64/plugins/cat-two-notes"
+          printf '%s\n' \
+            '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}' \
+            '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            | "$plugin/runtime/bin/python3" -E -s -B "$plugin/scripts/server.py" \
+            | python3 -c 'import json, sys
+          init, listing = map(json.loads, sys.stdin)
+          assert init["result"]["serverInfo"]["version"] == sys.argv[1]
+          names = {tool["name"] for tool in listing["result"]["tools"]}
+          assert {"cat_two_connection_status", "cat_two_open_setup"} <= names
+          ' "$version"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cat-two-notes-platform-packages
+          path: dist/cat-two-notes-*.zip*
+          if-no-files-found: error
+          compression-level: 0
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: cat-two-notes-platform-packages
+          path: dist
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          asset="cat-two-notes-${GITHUB_REF_NAME#v}.zip"
-          gh release create "$GITHUB_REF_NAME" "dist/$asset" "dist/$asset.sha256" \
-            --verify-tag --repo "$GITHUB_REPOSITORY" \
-            --title "Cat_two 笔记 · Codex 插件 $GITHUB_REF_NAME" \
-            --notes '解压 ZIP 后，按包内 README 安装。在 Codex 输入 `@Cat_two`，首次连接时填写应用地址和 MCP 令牌。'
+          (cd dist && sha256sum --check ./*.zip.sha256)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name' > published-assets.txt; then
+            for asset in dist/*.zip dist/*.zip.sha256; do
+              if ! grep -Fxq "${asset##*/}" published-assets.txt; then
+                gh release upload "$GITHUB_REF_NAME" "$asset" --repo "$GITHUB_REPOSITORY"
+              fi
+            done
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.zip.sha256 \
+              --verify-tag --repo "$GITHUB_REPOSITORY" \
+              --title "Cat_two 笔记 · Codex 插件 $GITHUB_REF_NAME" \
+              --notes '下载对应系统和架构的 ZIP，解压后按包内 README 安装。运行时已包含在包内。在 Codex 输入 `@Cat_two` 完成首次连接。'
+          fi
