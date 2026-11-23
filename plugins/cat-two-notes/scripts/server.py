@@ -1,9 +1,9 @@
 """Codex stdio MCP server for Cat_two's JSON Streamable HTTP transport."""
 
 import json
+import subprocess
 import sys
 import threading
-import webbrowser
 from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError
@@ -14,7 +14,7 @@ from settings import NotConfigured, SettingsError, configure, load_settings
 from setup_web import SetupWeb
 
 
-SERVER_INFO = {"name": "cat-two-notes", "version": "1.1.3"}
+SERVER_INFO = {"name": "cat-two-notes", "version": "1.2.0"}
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 NOTES_TOOLS = {
     "auth_get_current_user",
@@ -37,10 +37,48 @@ STATUS_TOOL = {
 }
 SETUP_TOOL = {
     "name": "cat_two_open_setup",
-    "description": "生成本机 Cat_two 配置页链接，用于首次连接或更换实例和令牌。请把链接交给用户在运行 Codex 的同一台电脑上打开，由用户在该页面输入令牌。",
+    "title": "添加或修改服务端",
+    "description": "应用户要求打开本机浏览器的 Cat_two 配置页，用于首次连接或更换地址和令牌。令牌仅在配置页填写。",
     "inputSchema": {"type": "object", "additionalProperties": False},
     "annotations": {"readOnlyHint": True, "openWorldHint": False},
 }
+SETTINGS_READ_TOOL = {
+    "name": "cat_two_settings_read",
+    "description": "读取 Cat_two 的设置界面定义。",
+    "inputSchema": {"type": "object", "additionalProperties": False},
+    "outputSchema": {
+        "type": "object",
+        "properties": {
+            "schema": {"type": "object"},
+            "values": {"type": "object"},
+            "layout": {"type": "array", "items": {"type": "object"}},
+        },
+        "required": ["schema", "values"],
+    },
+    "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    "_meta": {"ui": {"visibility": ["app"]}},
+}
+SETTINGS_UPDATE_TOOL = {
+    "name": "cat_two_settings_update",
+    "description": "处理设置界面的空更新。连接信息在本机配置页更改。",
+    "inputSchema": {
+        "type": "object",
+        "properties": {"set": {"type": "object", "additionalProperties": False}},
+        "required": ["set"],
+        "additionalProperties": False,
+    },
+    "outputSchema": {
+        "type": "object",
+        "properties": {"values": {"type": "object"}},
+        "required": ["values"],
+    },
+    "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    "_meta": {"ui": {"visibility": ["app"]}},
+}
+SETTINGS_CAPABILITIES = {"openai/settings": {
+    "readTool": SETTINGS_READ_TOOL["name"],
+    "updateTool": SETTINGS_UPDATE_TOOL["name"],
+}}
 
 
 class CatTwoError(Exception):
@@ -175,9 +213,17 @@ def verify_setup(endpoint, token):
 
 def launch_browser(url):
     try:
-        webbrowser.open(url, new=2)
-    except (OSError, webbrowser.Error):
-        # The terminal already displays the URL for manual use.
+        # A browser launcher may write to its inherited streams. Keep that output off MCP stdio.
+        subprocess.run(
+            [sys.executable, "-E", "-s", "-B", "-m", "webbrowser", "-t", url],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        # The setup response includes the URL for manual use.
         pass
 
 
@@ -199,9 +245,9 @@ def setup_browser():
     print("已保存 Cat_two 连接。", flush=True)
 
 
-def status_result(data, is_error=False):
+def status_result(data, is_error=False, text=None):
     return {
-        "content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False)}],
+        "content": [{"type": "text", "text": text if text is not None else json.dumps(data, ensure_ascii=False)}],
         "structuredContent": data,
         "isError": is_error,
     }
@@ -221,23 +267,27 @@ class LocalServer:
         return self.remote
 
     def list_tools(self):
-        tools = [STATUS_TOOL, SETUP_TOOL]
+        tools = [STATUS_TOOL, SETUP_TOOL, SETTINGS_READ_TOOL, SETTINGS_UPDATE_TOOL]
         try:
             tools.extend(self.get_remote().list_tools())
         except (SettingsError, CatTwoError):
             self.remote = None
         return {"tools": tools}
 
-    def open_setup(self, **status):
+    def open_setup(self, open_browser=False, **status):
         try:
             url = self.setup.open()
         except SettingsError as error:
-            return status_result({**status, "message": str(error)}, is_error=True)
+            return status_result({**status, "message": str(error)}, is_error=True, text=str(error))
+        message = "请在运行 Codex 的同一台电脑上打开此链接，在网页中填写 Cat_two 地址和 MCP 令牌。"
+        if open_browser:
+            threading.Thread(target=launch_browser, args=(url,), daemon=True).start()
+            message = "正在打开本机配置页。如果浏览器没有打开，请手动访问以下地址。"
         return status_result({
             **status,
             "setupUrl": url,
-            "message": "请在运行 Codex 的同一台电脑上打开此链接，在网页中填写 Cat_two 地址和 MCP 令牌。",
-        })
+            "message": message,
+        }, text=f"{message}\n{url}" if open_browser else None)
 
     def call(self, params):
         name = params.get("name")
@@ -247,7 +297,27 @@ class LocalServer:
         if name == SETUP_TOOL["name"]:
             if arguments:
                 return status_result({"message": "本机配置工具无需参数。"}, is_error=True)
-            return self.open_setup()
+            return self.open_setup(open_browser=True)
+        if name == SETTINGS_READ_TOOL["name"]:
+            if arguments:
+                return status_result({"message": "读取连接设置无需参数。"}, is_error=True)
+            return {"content": [], "structuredContent": {
+                "schema": {"type": "object", "properties": {}},
+                "values": {},
+                "layout": [{
+                    "kind": "group",
+                    "title": "服务端连接",
+                    "items": [{
+                        "kind": "tool",
+                        "tool": SETUP_TOOL["name"],
+                        "description": "在本机浏览器填写服务端地址和 MCP 令牌。",
+                    }],
+                }],
+            }}
+        if name == SETTINGS_UPDATE_TOOL["name"]:
+            if arguments != {"set": {}}:
+                return status_result({"message": "请使用「添加或修改服务端」打开本机配置页。"}, is_error=True)
+            return {"content": [], "structuredContent": {"values": {}}}
         if not isinstance(name, str) or (name != STATUS_TOOL["name"] and name not in NOTES_TOOLS):
             return status_result({"message": "此工具不在插件提供的笔记工具中。"}, is_error=True)
         try:
@@ -286,7 +356,11 @@ class LocalServer:
             version = params.get("protocolVersion")
             result = {
                 "protocolVersion": version if version in PROTOCOLS else PROTOCOLS[0],
-                "capabilities": {"tools": {}},
+                "capabilities": {
+                    "tools": {},
+                    "extensions": SETTINGS_CAPABILITIES,
+                    "experimental": SETTINGS_CAPABILITIES,
+                },
                 "serverInfo": SERVER_INFO,
             }
         elif method == "ping":

@@ -9,7 +9,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs
 
-from settings import SettingsError, _normalize_endpoint, _save_settings, parse_token
+from settings import SettingsError, _normalize_endpoint, _save_settings, load_settings, parse_token
 
 
 SETUP_LIFETIME = 10 * 60
@@ -31,6 +31,7 @@ STYLE = """
     padding: 0.55rem 0.65rem; border: 1px solid light-dark(#829a8c, #8da498);
     color: inherit; background: light-dark(#fff, #151d1a); border-radius: 0.4rem; }
   input[type="checkbox"] { margin: 0.2rem 0 0; }
+  .field-help { margin: 0.35rem 0 0; font-size: 0.9rem; }
   label.check { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.9rem; font-weight: 400; }
   button { margin-top: 1.25rem; padding: 0.6rem 1rem; border: 1px solid transparent;
     border-radius: 0.4rem; color: light-dark(#fff, #101e17); background: light-dark(#21664b, #9be0ba);
@@ -45,14 +46,23 @@ FORM = """
   <p>在 Cat_two 的「设置 → MCP 和 API」中创建 MCP 访问令牌。</p>
   <form method="post" autocomplete="off">
     <label for="url">Cat_two 应用网址或 MCP 地址</label>
-    <input id="url" name="url" type="url" placeholder="http://localhost:5230" required maxlength="2048">
+    <input id="url" name="url" type="url" placeholder="http://localhost:5230" value="{endpoint}" required maxlength="2048">
     <label for="token">MCP 访问令牌</label>
-    <input id="token" name="token" type="password" required maxlength="1024" spellcheck="false">
+    <input id="token" name="token" type="password" maxlength="1024" spellcheck="false"
+      autocomplete="new-password" aria-describedby="token-hint"{token_required}>
+    <p id="token-hint" class="field-help">{token_hint}</p>
     <label class="check"><input type="checkbox" name="allow_http" value="yes">
       <span>仅在可信网络中使用 HTTP。HTTP 会以明文传输令牌。</span></label>
     <button type="submit">验证并保存连接</button>
   </form>
 """
+
+
+def _saved_connection():
+    try:
+        return load_settings()
+    except SettingsError:
+        return None
 
 
 class SetupWeb:
@@ -92,12 +102,17 @@ class SetupWeb:
         with self._lock:
             return server.saved
 
-    def _save(self, server, endpoint, token):
+    def _save(self, server, endpoint, token, *, reuse_token):
         account = self.verify(endpoint, token)
         with self._lock:
             if self._server is not server or not server.active():
                 raise SettingsError("配置页已过期，请重新打开配置页。")
-            _save_settings(endpoint, token)
+            if reuse_token:
+                # A check with the old token must never overwrite a concurrent update.
+                if _saved_connection() != (endpoint, token):
+                    raise SettingsError("本机连接已更改，请检查地址和令牌后重试。")
+            else:
+                _save_settings(endpoint, token)
             server.saved = True
         return account
 
@@ -181,7 +196,7 @@ class _SetupHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self._check_route():
-            self._page(HTTPStatus.OK, "连接 Cat_two", FORM)
+            self._form()
 
     def do_POST(self):
         if not self._check_route():
@@ -212,14 +227,23 @@ class _SetupHandler(BaseHTTPRequestHandler):
             address, = fields["url"]
             value, = fields["token"]
             endpoint = _normalize_endpoint(address.strip())
-            token = parse_token(value.strip())
+            reuse_token = not value.strip()
+            if reuse_token:
+                saved = _saved_connection()
+                if saved is None:
+                    raise SettingsError("请输入 MCP 访问令牌。")
+                saved_endpoint, token = saved
+                if endpoint != saved_endpoint:
+                    raise SettingsError("更改 Cat_two 地址后需要重新填写 MCP 访问令牌。")
+            else:
+                token = parse_token(value)
             if endpoint.startswith("http://") and fields.get("allow_http") != ["yes"]:
                 raise SettingsError("请选择 HTTPS 地址，或确认在可信网络中使用 HTTP。")
-            account = self.server.owner._save(self.server, endpoint, token)
+            account = self.server.owner._save(self.server, endpoint, token, reuse_token=reuse_token)
         except (KeyError, ValueError, OSError):
-            self._form_error("无法读取连接设置，请重新输入。")
+            self._form("无法读取连接设置，请重新输入。")
         except SettingsError as error:
-            self._form_error(str(error).replace(token, "[已隐藏]") if token else str(error))
+            self._form(str(error).replace(token, "[已隐藏]") if token else str(error))
         else:
             account = html.escape(account.replace(token, "[已隐藏]")[:512])
             install_url = self.server.owner.install_url
@@ -232,7 +256,18 @@ class _SetupHandler(BaseHTTPRequestHandler):
                 '<p>连接已保存在本机。请新开一个 Codex 会话来加载笔记工具。</p>' + install_link
             ))
 
-    def _form_error(self, message):
-        self._page(HTTPStatus.BAD_REQUEST, "连接 Cat_two", (
-            f'<p class="error" role="alert">{html.escape(message)}</p>' + FORM
-        ))
+    def _form(self, message=None):
+        saved = _saved_connection()
+        endpoint = ""
+        if saved is not None and saved[1] not in saved[0]:
+            endpoint = saved[0]
+        form = FORM.format(
+            endpoint=html.escape(endpoint),
+            token_required="" if saved else " required",
+            token_hint=("地址不变时可留空，继续使用已保存的令牌。" if saved else "可粘贴令牌或完整的 Authorization 值。"),
+        )
+        status = HTTPStatus.OK
+        if message is not None:
+            status = HTTPStatus.BAD_REQUEST
+            form = f'<p class="error" role="alert">{html.escape(message)}</p>' + form
+        self._page(status, "连接 Cat_two", form)

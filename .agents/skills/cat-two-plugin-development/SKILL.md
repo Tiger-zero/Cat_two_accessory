@@ -14,7 +14,7 @@ description: 在 Cat_two_accessory 仓库开发和维护 Cat_two 的 Codex 本�
 ## 本地配置和凭据
 
 1. `scripts/server.py` 作为 `cat_two_local` 的 stdio MCP 进程运行，使用 Python 3.9 及以上的标准库。标准输出只写 MCP JSON 消息，诊断信息使用标准错误并省略令牌。
-2. `cat_two_connection_status` 在首次连接时返回 `setupUrl`，`cat_two_open_setup` 可重新打开配置页。`scripts/setup_web.py` 绑定 `127.0.0.1`，在随机路径接收同源表单。令牌通过密码框和 POST 正文提交。首次配置和更换凭据都先调用上游 `auth_get_current_user`，验证成功才保存。检查失败后的重试和保存后监听关闭行为。
+2. `cat_two_connection_status` 在首次连接时返回 `setupUrl`，`cat_two_open_setup` 打开本机浏览器。插件设置页通过 `openai/settings` 注册「添加或修改服务端」操作。设置读写工具只处理界面结构，地址和令牌在 `scripts/setup_web.py` 的独立表单输入。该表单绑定 `127.0.0.1`，以随机路径接收同源 POST，令牌使用密码框。首次配置和更换凭据先调用上游 `auth_get_current_user`，验证成功才保存。检查失败后的重试和保存后监听关闭行为。[插件设置规范](https://github.com/openai/mcp-extensions/blob/main/docs/spec.md#structured-settings)
 3. `scripts/settings.py` 处理 URL、令牌和连接文件。支持可达的 Docker 应用地址（默认映射端口 5230）或完整 MCP 地址，规范化时保留反代子路径。接受原始 MCP 令牌和复制的 `Authorization: Bearer …`。通过 HTTP 访问需要用户确认。
 4. 用户从 Cat_two「设置 → MCP 和 API」签发 MCP 令牌。仓库、ZIP、日志和对话中都应避免记录真实令牌。当前设置用原子替换写入 `~/.cat-two-codex/connection.json`，在 POSIX 上检查文件所有者和访问权限。验证失败时保留之前的设置。终端备用入口和撤销令牌方式见 [README](../../../README.md#首次连接)。
 

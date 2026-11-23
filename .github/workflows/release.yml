@@ -36,12 +36,17 @@ jobs:
           printf '%s\n' \
             '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+            '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"cat_two_settings_read","arguments":{}}}' \
             | "$smoke_dir/runtime/bin/python3" -E -s -B "$smoke_dir/scripts/server.py" \
             | python3 -c 'import json, sys
-          init, listing = map(json.loads, sys.stdin)
+          init, listing, settings = map(json.loads, sys.stdin)
           assert init["result"]["serverInfo"]["version"] == sys.argv[1]
+          capability = init["result"]["capabilities"]["extensions"]["openai/settings"]
           names = {tool["name"] for tool in listing["result"]["tools"]}
-          assert {"cat_two_connection_status", "cat_two_open_setup"} <= names
+          assert {"cat_two_connection_status", "cat_two_open_setup", capability["readTool"], capability["updateTool"]} <= names
+          page = settings["result"]["structuredContent"]
+          assert page["schema"]["properties"] == page["values"] == {}
+          assert page["layout"][0]["items"][0]["tool"] == "cat_two_open_setup"
           ' "$version"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -117,5 +122,5 @@ jobs:
             gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.zip.sha256 \
               --verify-tag --repo "$GITHUB_REPOSITORY" \
               --title "Cat_two 笔记 · Codex 插件 $GITHUB_REF_NAME" \
-              --notes 'Windows 首次配置请下载对应架构的市场 ZIP，解压后双击 `setup-cat-two.cmd`。在本机浏览器保存连接后，点击「在 Codex 中安装本地插件」，然后在「此电脑」会话使用 `@Cat_two`。单插件导入包文件名以 `-plugin.zip` 结尾。'
+              --notes '安装后点「设置」运行首次引导。后续从插件设置的「服务端连接 → 添加或修改服务端」打开本机表单。Windows 市场包也提供 `setup-cat-two.cmd`。单插件导入包文件名以 `-plugin.zip` 结尾。'
           fi
