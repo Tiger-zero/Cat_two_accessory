@@ -62,6 +62,14 @@ def _validate_token(token: str) -> str:
     return token
 
 
+def parse_token(value: str) -> str:
+    """Accept a Cat_two MCP token or its copied Bearer value."""
+    token = re.sub(r"^(?:Authorization:[ \t]*)?Bearer[ \t]+", "", value.strip(), flags=re.IGNORECASE)
+    if token.startswith("memos_pat_"):
+        raise SettingsError("请在 Cat_two「MCP 和 API」中创建 MCP 令牌。")
+    return _validate_token(token)
+
+
 def load_settings() -> tuple[str, str]:
     """Read the saved MCP endpoint and access token without displaying them."""
     path = _settings_path()
@@ -122,7 +130,7 @@ def configure(verify: Callable[[str, str], str]) -> None:
     with warnings.catch_warnings():
         warnings.simplefilter("error", getpass.GetPassWarning)
         try:
-            token = _validate_token(getpass.getpass("Cat_two 访问令牌（输入不会显示）: ").strip())
+            token = parse_token(getpass.getpass("Cat_two MCP 令牌（输入不会显示）: "))
         except getpass.GetPassWarning:
             raise SettingsError("此终端无法隐藏输入。请换用本机交互式终端。") from None
 

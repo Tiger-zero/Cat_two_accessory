@@ -7,28 +7,35 @@ from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from settings import NotConfigured, SettingsError, configure, load_settings
+from setup_web import SetupWeb
 
 
-SERVER_INFO = {"name": "cat-two-notes", "version": "0.1.0"}
+SERVER_INFO = {"name": "cat-two-notes", "version": "1.0.0"}
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 NOTES_TOOLS = {
     "auth_get_current_user",
     "user_list_memo_views",
     "memo_list_memos",
     "memo_get_memo",
+    "memo_search",
+    "memo_batch_get",
+    "tag_search",
+    "tag_tree",
     "memo_create_memo",
     "memo_update_memo",
 }
-SETUP_HELP = (
-    "请在 Cat_two_accessory 仓库根目录运行 "
-    "python3 -B plugins/cat-two-notes/scripts/server.py configure，"
-    "完成后新开 Codex 会话。"
-)
+SETUP_HELP = "调用 cat_two_open_setup 获取本机配置页面，在浏览器中填写 Cat_two 地址和 MCP 令牌。"
 STATUS_TOOL = {
     "name": "cat_two_connection_status",
-    "description": "检查本地 Cat_two 配置和当前账号。首次使用时会提示如何配置。",
+    "description": "检查本地 Cat_two 配置和当前账号。首次连接时调用 cat_two_open_setup。",
     "inputSchema": {"type": "object", "additionalProperties": False},
     "annotations": {"readOnlyHint": True, "openWorldHint": True},
+}
+SETUP_TOOL = {
+    "name": "cat_two_open_setup",
+    "description": "生成本机 Cat_two 配置页链接，用于首次连接或更换实例和令牌。请把链接交给用户在运行 Codex 的同一台电脑上打开，由用户在该页面输入令牌。",
+    "inputSchema": {"type": "object", "additionalProperties": False},
+    "annotations": {"readOnlyHint": True, "openWorldHint": False},
 }
 
 
@@ -155,6 +162,13 @@ def verify(endpoint, token):
     return remote.account()
 
 
+def verify_setup(endpoint, token):
+    try:
+        return verify(endpoint, token)
+    except CatTwoError as error:
+        raise SettingsError(str(error)) from None
+
+
 def status_result(data, is_error=False):
     return {
         "content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False)}],
@@ -166,6 +180,7 @@ def status_result(data, is_error=False):
 class LocalServer:
     def __init__(self):
         self.remote = None
+        self.setup = SetupWeb(verify_setup)
 
     def get_remote(self):
         endpoint, token = load_settings()
@@ -176,17 +191,29 @@ class LocalServer:
         return self.remote
 
     def list_tools(self):
+        tools = [STATUS_TOOL, SETUP_TOOL]
         try:
-            return {"tools": [STATUS_TOOL, *self.get_remote().list_tools()]}
+            tools.extend(self.get_remote().list_tools())
         except (SettingsError, CatTwoError):
             self.remote = None
-            return {"tools": [STATUS_TOOL]}
+        return {"tools": tools}
 
     def call(self, params):
         name = params.get("name")
         arguments = params.get("arguments", {})
         if not isinstance(arguments, dict):
             return status_result({"message": "MCP 工具参数须为对象。"}, is_error=True)
+        if name == SETUP_TOOL["name"]:
+            if arguments:
+                return status_result({"message": "本机配置工具无需参数。"}, is_error=True)
+            try:
+                url = self.setup.open()
+            except SettingsError as error:
+                return status_result({"message": str(error)}, is_error=True)
+            return status_result({
+                "setupUrl": url,
+                "message": "请在运行 Codex 的同一台电脑上打开此链接，在网页中填写 Cat_two 地址和 MCP 令牌。",
+            })
         if not isinstance(name, str) or (name != STATUS_TOOL["name"] and name not in NOTES_TOOLS):
             return status_result({"message": "此工具不在插件提供的笔记工具中。"}, is_error=True)
         try:

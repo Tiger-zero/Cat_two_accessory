@@ -7,7 +7,7 @@ description: 查询和整理 Cat_two 笔记，汇总知识或待办，并在预�
 
 ## 连接
 
-使用插件提供的 `cat_two_local` MCP 连接。首次使用、需要检查连接或笔记工具不可用时，先调用 `cat_two_connection_status`。需要配置时，按同一插件的 `cat-two-setup` 技能引导用户在本机终端填写网址和访问令牌。若连接工具也不可用，引导用户检查插件安装。[安装与首次连接](https://github.com/Tiger-zero/Cat_two_accessory#首次连接)
+使用插件提供的 `cat_two_local` MCP 连接。首次使用、需要检查连接或笔记工具不可用时，先调用 `cat_two_connection_status`。需要配置时，调用 `cat_two_open_setup`，按同一插件的 `cat-two-setup` 技能把本机配置页链接提供给用户。若连接工具也不可用，引导用户检查插件安装。[安装与首次连接](https://github.com/Tiger-zero/Cat_two_accessory#首次连接)
 
 开始读取或写入前，调用 `auth_get_current_user` 确认账号。若连接或鉴权失败，说明当前工具返回的状态，请用户核对实例可达性、网址和令牌后重试。
 
@@ -18,7 +18,7 @@ Codex 可能为工具名添加连接前缀。检查工具结果的 `isError`，�
 | 操作 | 工具 | 参数示例 |
 | --- | --- | --- |
 | 检查账号 | `auth_get_current_user` | `{}` |
-| 读取保存的视图 | `user_list_memo_views` | `{"user":"users/USERNAME"}`，使用账号结果中的 `user.name` |
+| 读取保存的视图（实例提供时） | `user_list_memo_views` | `{"user":"users/USERNAME"}`，使用账号结果中的 `user.name` |
 | 查找笔记 | `memo_list_memos` | `{"pageSize":50,"filter":"has_incomplete_tasks","orderBy":"update_time desc"}` |
 | 读取笔记 | `memo_get_memo` | `{"memo":"memos/MEMO_UID"}` |
 | 新建笔记 | `memo_create_memo` | `{"body":{"content":"# 任务汇总\n- [ ] 跟进事项"}}` |

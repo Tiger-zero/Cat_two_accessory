@@ -1,14 +1,22 @@
 {
   "name": "cat-two-notes",
-  "version": "0.1.0",
-  "description": "连接本地配置的 Cat_two 实例，整理笔记并在确认后归档 Codex 任务。",
+  "version": "1.0.0",
+  "description": "通过 MCP 连接自建的 Cat_two，查询笔记并归档 Codex 任务。",
+  "author": {
+    "name": "Tiger-zero"
+  },
+  "repository": "https://github.com/Tiger-zero/Cat_two_accessory",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Cat_two 笔记",
-    "shortDescription": "查询和整理 Cat_two 笔记，归档 Codex 任务",
+    "shortDescription": "查询 Cat_two 笔记，归档 Codex 任务",
+    "developerName": "Tiger-zero",
+    "category": "Productivity",
+    "logo": "./assets/cat-two.png",
+    "composerIcon": "./assets/cat-two.png",
     "defaultPrompt": [
-      "检查 Cat_two 连接并显示当前账号。",
+      "检查 Cat_two 连接，首次使用时打开配置引导。",
       "按已有标签汇总 Cat_two 最近七天的未完成待办，保留原笔记链接。",
       "把本次任务整理成 Cat_two 归档草稿，先给我确认。"
     ]
