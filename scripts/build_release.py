@@ -1,4 +1,4 @@
-"""Build versioned Codex marketplace ZIPs and their checksums."""
+"""Build versioned Codex plugin and marketplace ZIPs with checksums."""
 
 import argparse
 import hashlib
@@ -9,6 +9,7 @@ import shutil
 import stat
 import sys
 import tarfile
+import unicodedata
 from pathlib import Path, PurePosixPath
 from tempfile import TemporaryDirectory
 from urllib.request import urlopen
@@ -19,11 +20,11 @@ ROOT = Path(__file__).resolve().parent.parent
 PLUGIN_NAME = "cat-two-notes"
 PLUGIN = Path("plugins") / PLUGIN_NAME
 MARKETPLACE = Path(".agents/plugins/marketplace.json")
+LEGACY_FILES = (".codex-plugin/plugin.json", ".mcp.json")
 FILES = (
     "plugin.json",
     "mcp.json",
-    ".codex-plugin/plugin.json",
-    ".mcp.json",
+    *LEGACY_FILES,
     "scripts/server.py",
     "scripts/settings.py",
     "scripts/setup_web.py",
@@ -106,14 +107,15 @@ def runtime_member_path(name):
     return path.as_posix()
 
 
-def add_runtime(archive, archive_root, runtime_tar, executable):
-    prefix = f"{archive_root}/{PLUGIN.as_posix()}/runtime"
+def add_runtime(archive, prefix, runtime_tar, executable, omit_terminfo=False):
     entries = {}
     links = {}
     with tarfile.open(runtime_tar, "r|gz") as runtime:
         for member in runtime:
             name = runtime_member_path(member.name)
-            if member.isdir():
+            # The direct importer rejects case-insensitive path collisions.
+            # The MCP server uses no terminfo data.
+            if member.isdir() or (omit_terminfo and name.startswith("python/share/terminfo/")):
                 continue
             if name == "python" or name in entries or name in links:
                 raise ValueError(f"Invalid or repeated Python runtime entry: {name}")
@@ -155,7 +157,20 @@ def add_runtime(archive, archive_root, runtime_tar, executable):
         raise ValueError(f"Python runtime is missing an executable {executable}")
 
 
-def build(output_dir, platform="source", cache_dir=None):
+def verify_zip(path, standalone):
+    with ZipFile(path) as archive:
+        if archive.testzip() is not None:
+            raise ValueError("The release archive failed its integrity check")
+        if standalone:
+            seen = set()
+            for name in archive.namelist():
+                key = unicodedata.normalize("NFC", name).casefold()
+                if key in seen:
+                    raise ValueError(f"Conflicting path in the standalone plugin ZIP: {name}")
+                seen.add(key)
+
+
+def build(output_dir, platform="source", cache_dir=None, package_format="marketplace"):
     manifest = read_object(PLUGIN / "plugin.json")
     legacy_manifest = read_object(PLUGIN / ".codex-plugin/plugin.json")
     marketplace = read_object(MARKETPLACE)
@@ -173,7 +188,7 @@ def build(output_dir, platform="source", cache_dir=None):
         raise ValueError("The marketplace must point to the packaged plugin directory")
     mcp_files = {PLUGIN / name: read_object(PLUGIN / name) for name in ("mcp.json", ".mcp.json")}
 
-    files = {Path("README.md"), MARKETPLACE, *(PLUGIN / path for path in FILES)}
+    plugin_files = {PLUGIN / path for path in FILES}
     interfaces = (
         manifest["extensions"]["com.openai"]["interface"],
         legacy_manifest["interface"],
@@ -184,17 +199,15 @@ def build(output_dir, platform="source", cache_dir=None):
                 asset = Path(interface[field])
                 if asset.parts[:1] != ("assets",) or ".." in asset.parts:
                     raise ValueError(f"{field} must refer to a file in the plugin assets directory")
-                files.add(PLUGIN / asset)
+                plugin_files.add(PLUGIN / asset)
 
     archive_root = f"{PLUGIN_NAME}-{version}"
     if platform != "source":
         archive_root += f"-{platform}"
-    archive_path = output_dir / f"{archive_root}.zip"
-    checksum_path = archive_path.with_suffix(".zip.sha256")
+    formats = ("marketplace", "plugin") if package_format == "both" else (package_format,)
     output_dir.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(dir=output_dir) as temporary_dir:
         temporary_dir = Path(temporary_dir)
-        staged_archive = temporary_dir / archive_path.name
         mcp_overrides = {}
         if platform != "source":
             executable = "python.exe" if platform.startswith("windows-") else "bin/python3"
@@ -214,48 +227,59 @@ def build(output_dir, platform="source", cache_dir=None):
                 server["command"] = f"./runtime/{executable}"
                 server["args"] = ["-E", "-s", *server["args"]]
                 mcp_overrides[path] = (json.dumps(mcp, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-        with ZipFile(staged_archive, "w") as archive:
-            for path in sorted(files, key=Path.as_posix):
-                source = ROOT / path
-                if not source.is_file() or source.resolve() != source:
-                    raise ValueError(f"Expected a regular file at {path.as_posix()}")
-                contents = mcp_overrides[path] if path in mcp_overrides else source.read_bytes()
-                write_zip_entry(archive, f"{archive_root}/{path.as_posix()}", contents)
-            if platform != "source":
-                add_runtime(archive, archive_root, runtime_tar, executable)
-                prefix = f"{archive_root}/{PLUGIN.as_posix()}/runtime"
-                write_zip_entry(archive, f"{prefix}/THIRD-PARTY-LICENSES.rst", license_text)
-                sources = (
-                    f"CPython {PYTHON_VERSION} for {target}\n"
-                    f"Original binary archive: {runtime_url}\n"
-                    f"Build recipes and dependency sources: {PYTHON_REPOSITORY}/tree/{PYTHON_BUILD}\n"
-                    f"CPython source: https://www.python.org/ftp/python/{PYTHON_VERSION}/Python-{PYTHON_VERSION}.tar.xz\n"
-                    "Berkeley DB source: https://ftp.osuosl.org/pub/blfs/conglomeration/db/db-6.0.19.tar.gz\n"
-                )
-                write_zip_entry(archive, f"{prefix}/THIRD-PARTY-SOURCES.txt", sources.encode("ascii"))
-        with ZipFile(staged_archive) as archive:
-            if archive.testzip() is not None:
-                raise ValueError("The release archive failed its integrity check")
+            sources = (
+                f"CPython {PYTHON_VERSION} for {target}\n"
+                f"Original binary archive: {runtime_url}\n"
+                f"Build recipes and dependency sources: {PYTHON_REPOSITORY}/tree/{PYTHON_BUILD}\n"
+                f"CPython source: https://www.python.org/ftp/python/{PYTHON_VERSION}/Python-{PYTHON_VERSION}.tar.xz\n"
+                "Berkeley DB source: https://ftp.osuosl.org/pub/blfs/conglomeration/db/db-6.0.19.tar.gz\n"
+            ).encode("ascii")
 
-        digest = sha256(staged_archive)
-        staged_checksum = temporary_dir / checksum_path.name
-        staged_checksum.write_bytes(f"{digest}  {archive_path.name}\n".encode("ascii"))
-        staged_archive.replace(archive_path)
-        staged_checksum.replace(checksum_path)
+        staged = []
+        for layout in formats:
+            standalone = layout == "plugin"
+            if standalone:
+                staged_archive = temporary_dir / f"{archive_root}-plugin.zip"
+                files = plugin_files.difference(PLUGIN / path for path in LEGACY_FILES)
+                runtime_prefix = "runtime"
+            else:
+                staged_archive = temporary_dir / f"{archive_root}.zip"
+                files = plugin_files | {Path("README.md"), MARKETPLACE}
+                runtime_prefix = f"{archive_root}/{PLUGIN.as_posix()}/runtime"
 
-    return archive_path, checksum_path
+            with ZipFile(staged_archive, "w") as archive:
+                for path in sorted(files, key=Path.as_posix):
+                    source = ROOT / path
+                    if not source.is_file() or source.resolve() != source:
+                        raise ValueError(f"Expected a regular file at {path.as_posix()}")
+                    contents = mcp_overrides[path] if path in mcp_overrides else source.read_bytes()
+                    name = path.relative_to(PLUGIN).as_posix() if standalone else f"{archive_root}/{path.as_posix()}"
+                    write_zip_entry(archive, name, contents)
+                if platform != "source":
+                    add_runtime(archive, runtime_prefix, runtime_tar, executable, omit_terminfo=standalone)
+                    write_zip_entry(archive, f"{runtime_prefix}/THIRD-PARTY-LICENSES.rst", license_text)
+                    write_zip_entry(archive, f"{runtime_prefix}/THIRD-PARTY-SOURCES.txt", sources)
+
+            verify_zip(staged_archive, standalone)
+            digest = sha256(staged_archive)
+            staged_checksum = staged_archive.with_suffix(".zip.sha256")
+            staged_checksum.write_bytes(f"{digest}  {staged_archive.name}\n".encode("ascii"))
+            staged.extend((staged_archive, staged_checksum))
+
+        return tuple(path.replace(output_dir / path.name) for path in staged)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     parser.add_argument("--platform", choices=("source", "all", *PYTHON_RUNTIMES), default="source")
+    parser.add_argument("--format", choices=("marketplace", "plugin", "both"), default="marketplace")
     parser.add_argument("--runtime-cache", type=Path, help="Reuse verified runtime archives from this directory")
     args = parser.parse_args()
     platforms = PYTHON_RUNTIMES if args.platform == "all" else (args.platform,)
     try:
         for platform in platforms:
-            for path in build(args.output_dir, platform, args.runtime_cache):
+            for path in build(args.output_dir, platform, args.runtime_cache, args.format):
                 print(path.resolve(), flush=True)
     except (OSError, ValueError, KeyError, TypeError, tarfile.TarError) as error:
         print(f"Could not build release: {error}", file=sys.stderr)

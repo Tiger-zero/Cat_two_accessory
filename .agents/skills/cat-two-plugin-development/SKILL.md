@@ -28,5 +28,6 @@ description: 在 Cat_two_accessory 仓库开发和维护 Cat_two 的 Codex 本�
 
 1. 在仓库根目录执行 `codex plugin marketplace add .` 和 `codex plugin add cat-two-notes@cat-two-accessory`。更新源目录后用 Codex 的重新安装流程刷新缓存。检查 `codex plugin list` 和桌面端 `@Cat_two` 入口。[Codex 插件文档](https://developers.openai.com/plugins/build/plugins)
 2. 在隔离的本机配置和测试 Cat_two 实例中验证未配置状态、配置页成功和失败路径、已配置账号、工具发现，以及只读查询。使用测试令牌覆盖权限差异。页面验证至少覆盖 HTTP 确认、错误令牌重试、跨源 POST 拒绝、无令牌回显和保存后失效。若 Codex 会话仍使用初始工具列表，新建本地会话复验。
-3. 用 `python3 -B scripts/build_release.py --platform all` 构建平台 ZIP 和 SHA-256 校验文件，或用 `--platform linux-x64` 等值构建单个平台。构建器按固定摘要校验 CPython 分发包，并为成品重写两份 MCP 清单，指向包内运行时。检查产物的市场清单、图标、MCP 启动文件和运行时许可。用解压后的实际产物安装，验证 Codex 能直接启动随包运行时。新增插件文件时检查打包清单。
-4. 按 [README](../../../README.md#构建发布包) 和 [Release 工作流](../../../.github/workflows/release.yml) 核对两份插件清单、`server.py` 版本、标签与 ZIP 文件名。手动构建可从 Actions 获取制品，推送版本标签则发布到 GitHub Release。发布后核对 [GitHub Releases](https://github.com/Tiger-zero/Cat_two_accessory/releases) 上的 ZIP 和校验文件。
+3. 用 `python3 -B scripts/build_release.py --platform all --format both` 构建两种 ZIP 和 SHA-256 校验文件，或用 `--platform windows-x64 --format plugin` 构建指定的单插件包。构建器按固定摘要校验 CPython 分发包，并将 MCP 启动命令指向包内运行时。
+4. 校验 `-plugin.zip` 根目录的 `plugin.json`、`mcp.json`、技能、图标、脚本和运行时。保持该目录只包含一个插件。市场 ZIP 中的市场清单应指向完整插件目录。用解压后的产物验证 Codex 能启动随包运行时，检查运行时许可。新增插件文件时检查打包清单。
+5. 按 [README](../../../README.md#构建发布包) 和 [Release 工作流](../../../.github/workflows/release.yml) 核对两份插件清单、`server.py` 版本、标签与 ZIP 文件名。手动构建可从 Actions 获取制品，推送版本标签则发布到 GitHub Release。发布后核对 [GitHub Releases](https://github.com/Tiger-zero/Cat_two_accessory/releases) 上的 ZIP 和校验文件。

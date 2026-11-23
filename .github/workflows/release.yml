@@ -25,15 +25,18 @@ jobs:
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then
             test "$GITHUB_REF_NAME" = "v$version"
           fi
-          python3 -B scripts/build_release.py --platform all
+          python3 -B scripts/build_release.py --platform all --format both
           (cd dist && sha256sum --check ./*.zip.sha256)
           smoke_dir=$(mktemp -d)
-          unzip -q "dist/cat-two-notes-$version-linux-x64.zip" -d "$smoke_dir"
-          plugin="$smoke_dir/cat-two-notes-$version-linux-x64/plugins/cat-two-notes"
+          unzip -q "dist/cat-two-notes-$version-linux-x64-plugin.zip" -d "$smoke_dir"
+          test -f "$smoke_dir/plugin.json"
+          test -f "$smoke_dir/mcp.json"
+          test ! -e "$smoke_dir/.agents"
+          test ! -e "$smoke_dir/plugins"
           printf '%s\n' \
             '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}' \
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
-            | "$plugin/runtime/bin/python3" -E -s -B "$plugin/scripts/server.py" \
+            | "$smoke_dir/runtime/bin/python3" -E -s -B "$smoke_dir/scripts/server.py" \
             | python3 -c 'import json, sys
           init, listing = map(json.loads, sys.stdin)
           assert init["result"]["serverInfo"]["version"] == sys.argv[1]
@@ -73,5 +76,5 @@ jobs:
             gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.zip.sha256 \
               --verify-tag --repo "$GITHUB_REPOSITORY" \
               --title "Cat_two 笔记 · Codex 插件 $GITHUB_REF_NAME" \
-              --notes '下载对应系统和架构的 ZIP，解压后按包内 README 安装。运行时已包含在包内。在 Codex 输入 `@Cat_two` 完成首次连接。'
+              --notes '在「插件 → 添加 → 创建插件」上传对应平台的 `-plugin.zip`。使用本地市场时，下载同平台的市场 ZIP，解压后按 README 安装。两个包都内置运行时。安装后在 Codex 本地会话输入 `@Cat_two` 完成首次连接。'
           fi

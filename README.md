@@ -6,13 +6,23 @@
 
 需要支持本地插件的 Codex，以及一台能访问 Cat_two 的电脑。发布 ZIP 已包含运行时，由 Codex 自动启动。安装时无需另外安装 Python、构建代码或启动 MCP 服务。
 
-从 [GitHub Releases](https://github.com/Tiger-zero/Cat_two_accessory/releases) 下载与系统和架构对应的 ZIP。文件名为 `cat-two-notes-版本-平台.zip`。
+从 [GitHub Releases](https://github.com/Tiger-zero/Cat_two_accessory/releases) 下载与系统和架构对应的 ZIP。
 
 | 系统 | x64（Intel 或 AMD） | ARM64 |
 | --- | --- | --- |
 | Windows | `windows-x64` | `windows-arm64` |
 | macOS | `macos-x64` | `macos-arm64`（Apple 芯片） |
 | Linux（glibc） | `linux-x64` | `linux-arm64` |
+
+### 在 Codex「创建插件」中上传
+
+选择文件名以 `-plugin.zip` 结尾的单插件包。例如 Windows x64 使用 `cat-two-notes-1.1.1-windows-x64-plugin.zip`。在 Codex 打开「插件 → 添加 → 创建插件」，选择该 ZIP 后点「添加插件」。上传时直接选择 ZIP 文件。
+
+单插件包的 `plugin.json` 位于 ZIP 根目录。如果上传提示 `Expected a single plugin archive`，检查文件名末尾是否为 `-plugin.zip`。插件需要本地 MCP 权限。如果客户端或账户提示无法运行本地 MCP，可通过下面的本地市场方式安装。
+
+### 从本地插件市场安装
+
+选择文件名为 `cat-two-notes-版本-平台.zip` 的市场包，例如 `cat-two-notes-1.1.1-windows-x64.zip`。
 
 解压 ZIP，进入包含 `.agents` 和 `plugins` 的目录。Codex 的本地插件入口接收该目录。在终端运行以下命令注册目录和安装插件。
 
@@ -32,7 +42,7 @@ codex plugin add cat-two-notes@cat-two-accessory
 
 更换地址或令牌时，可以在聊天中选择插件并发送「重新配置 Cat_two」。配置保存在当前用户目录下的 `~/.cat-two-codex/connection.json`。该文件在 macOS 和 Linux 上仅当前用户可读写，令牌以明文保存在文件中，避免提交或分享该文件。撤销令牌请在 Cat_two 的「MCP 和 API」中操作。
 
-如果本机配置页无法打开，可以在解压后的目录用包内运行时配置。命令会隐藏令牌输入。
+如果本机配置页无法打开，可以在解压后的本地市场目录用包内运行时配置。命令会隐藏令牌输入。
 
 ```sh
 ./plugins/cat-two-notes/runtime/bin/python3 -B plugins/cat-two-notes/scripts/server.py configure
@@ -54,6 +64,6 @@ Windows PowerShell 使用以下命令。
 
 ## 构建发布包
 
-- 从 GitHub **Actions → Build Codex plugin ZIPs → Run workflow** 手动构建。运行成功后，在该次运行的 **Artifacts** 中下载 `cat-two-notes-platform-packages`，从其中取出对应平台的 ZIP。
-- 发布时同步更新两份插件清单和 `server.py` 的版本号，再推送同版本标签（如 `v1.1.0`）。工作流构建并校验所有平台 ZIP 后，将 ZIP 和 SHA-256 文件发布到该标签的 Release。[构建与发布工作流](.github/workflows/release.yml)
-- 开发者可以从仓库目录安装源码版，Codex 会使用系统的 `python3`（3.9 或更新版本）。也可以运行 `python3 -B scripts/build_release.py --platform all` 在 `dist/` 复现发布包，或用 `--platform linux-x64` 等值只构建一个平台。[开发 Skill](.agents/skills/cat-two-plugin-development/SKILL.md)
+- 从 GitHub **Actions → Build Codex plugin ZIPs → Run workflow** 手动构建。运行成功后，在该次运行的 **Artifacts** 中下载 `cat-two-notes-platform-packages`，从其中取出对应平台和安装方式的 ZIP。
+- 发布时同步更新两份插件清单和 `server.py` 的版本号，再推送同版本标签（如 `v1.1.1`）。工作流构建并校验所有平台的单插件包和市场包，再将 ZIP 和 SHA-256 文件发布到该标签的 Release。[构建与发布工作流](.github/workflows/release.yml)
+- 开发者可以从仓库目录安装源码版，Codex 会使用系统的 `python3`（3.9 或更新版本）。运行 `python3 -B scripts/build_release.py --platform all --format both` 可在 `dist/` 复现两种发布包。用 `--platform windows-x64 --format plugin` 可只构建 Windows x64 单插件包。[开发 Skill](.agents/skills/cat-two-plugin-development/SKILL.md)

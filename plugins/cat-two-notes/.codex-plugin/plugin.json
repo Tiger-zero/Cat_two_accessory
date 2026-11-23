@@ -1,6 +1,6 @@
 {
   "name": "cat-two-notes",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "通过 MCP 连接自建的 Cat_two，查询笔记并归档 Codex 任务。",
   "author": {
     "name": "Tiger-zero"
