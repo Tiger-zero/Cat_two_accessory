@@ -16,20 +16,20 @@
 
 ### Windows 本机设置与安装
 
-1. 下载 Windows 市场包，例如 `cat-two-notes-1.1.2-windows-x64.zip`。解压整个 ZIP，双击解压目录中的 `setup-cat-two.cmd`。
+1. 下载 Windows 市场包，例如 `cat-two-notes-1.1.3-windows-x64.zip`。解压整个 ZIP，双击解压目录中的 `setup-cat-two.cmd`。
 2. 启动器会在默认浏览器打开临时本机配置页。填写 Docker 应用地址和 MCP 令牌，再点「验证并保存连接」。如果浏览器没有自动打开，把启动器显示的地址复制到本机浏览器。
 3. 保存成功后，点「在 Codex 中安装本地插件」，在桌面版确认安装 **Cat_two 笔记**。如果系统询问是否打开 ChatGPT 或 Codex，选择打开。若链接无法打开，可以按下文从本地市场安装。
 4. 在 Codex 桌面版新建会话，发送前把「工作位置」选为「此电脑」。输入 `@Cat_two`，选择 **Cat_two Accessory** 来源中的 **Cat_two 笔记**。保留解压目录，供 Codex 读取本地市场。[Codex 工作位置说明](https://learn.chatgpt.com/docs/environments/modes)
 
 ### 在 Codex「创建插件」中上传
 
-选择文件名以 `-plugin.zip` 结尾的单插件包。例如 Windows x64 使用 `cat-two-notes-1.1.2-windows-x64-plugin.zip`。在 Codex 打开「插件 → 添加 → 创建插件」，选择该 ZIP 后点「添加插件」。上传时直接选择 ZIP 文件。
+选择文件名以 `-plugin.zip` 结尾的单插件包。例如 Windows x64 使用 `cat-two-notes-1.1.3-windows-x64-plugin.zip`。在 Codex 打开「插件 → 添加 → 创建插件」，选择该 ZIP 后点「添加插件」。上传时直接选择 ZIP 文件。
 
 单插件包的 `plugin.json` 位于 ZIP 根目录。如果上传提示 `Expected a single plugin archive`，检查文件名末尾是否为 `-plugin.zip`。上传后看到 `@Cat_two` 表示 Codex 已加载插件信息。连接工具需要桌面版「此电脑」会话。会话里仍缺少工具时，按上面的 Windows 本机步骤或以下市场步骤安装。
 
 ### 从本地插件市场安装
 
-选择文件名为 `cat-two-notes-版本-平台.zip` 的市场包，例如 `cat-two-notes-1.1.2-windows-x64.zip`。
+选择文件名为 `cat-two-notes-版本-平台.zip` 的市场包，例如 `cat-two-notes-1.1.3-windows-x64.zip`。
 
 解压 ZIP，进入包含 `.agents` 和 `plugins` 的目录。Codex 的本地插件入口接收该目录。在终端运行以下命令注册目录和安装插件。
 
@@ -68,5 +68,5 @@ macOS 和 Linux 也可以在解压目录用包内运行时打开浏览器配置�
 ## 构建发布包
 
 - 从 GitHub **Actions → Build Codex plugin ZIPs → Run workflow** 手动构建。运行成功后，在该次运行的 **Artifacts** 中下载 `cat-two-notes-platform-packages`，从其中取出对应平台和安装方式的 ZIP。
-- 发布时同步更新两份插件清单和 `server.py` 的版本号，再推送同版本标签（如 `v1.1.2`）。工作流构建并校验所有平台的单插件包和市场包，验证 Windows x64 启动器后将 ZIP 和 SHA-256 文件发布到该标签的 Release。[构建与发布工作流](.github/workflows/release.yml)
+- 发布时同步更新两份插件清单和 `server.py` 的版本号，再推送同版本标签（如 `v1.1.3`）。工作流构建并校验所有平台的单插件包和市场包，验证 Windows x64 启动器后将 ZIP 和 SHA-256 文件发布到该标签的 Release。[构建与发布工作流](.github/workflows/release.yml)
 - 开发者可以从仓库目录安装源码版，Codex 会使用系统的 `python3`（3.9 或更新版本）。运行 `python3 -B scripts/build_release.py --platform all --format both` 可在 `dist/` 复现两种发布包。用 `--platform windows-x64 --format plugin` 可只构建 Windows x64 单插件包。[开发 Skill](.agents/skills/cat-two-plugin-development/SKILL.md)

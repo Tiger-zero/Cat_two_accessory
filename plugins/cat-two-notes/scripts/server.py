@@ -14,7 +14,7 @@ from settings import NotConfigured, SettingsError, configure, load_settings
 from setup_web import SetupWeb
 
 
-SERVER_INFO = {"name": "cat-two-notes", "version": "1.1.2"}
+SERVER_INFO = {"name": "cat-two-notes", "version": "1.1.3"}
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 NOTES_TOOLS = {
     "auth_get_current_user",

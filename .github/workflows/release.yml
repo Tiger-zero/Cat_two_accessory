@@ -72,12 +72,14 @@ jobs:
             -NoNewWindow -RedirectStandardOutput $output -RedirectStandardError $errors -PassThru
           try {
             $deadline = (Get-Date).AddSeconds(35)
+            $url = ''
             do {
               Start-Sleep -Milliseconds 500
               $text = Get-Content -LiteralPath $output -Raw
-              $url = [regex]::Match([string]$text, 'http://127\.0\.0\.1:\d+/setup/[\w-]+').Value
+              if ($text) { $url = [regex]::Match($text, 'http://127\.0\.0\.1:\d+/setup/[\w-]+').Value }
             } until ($url -or $process.HasExited -or (Get-Date) -gt $deadline)
             if (-not $url) {
+              if ($text) { Write-Output $text }
               Get-Content -LiteralPath $errors
               throw 'The launcher did not produce a setup URL.'
             }
