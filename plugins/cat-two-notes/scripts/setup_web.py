@@ -13,6 +13,7 @@ from settings import SettingsError, _normalize_endpoint, _save_settings, parse_t
 
 
 SETUP_LIFETIME = 10 * 60
+SOCKET_TIMEOUT = 3
 MAX_BODY_BYTES = 8192
 
 STYLE = """
@@ -34,6 +35,7 @@ STYLE = """
   button { margin-top: 1.25rem; padding: 0.6rem 1rem; border: 1px solid transparent;
     border-radius: 0.4rem; color: light-dark(#fff, #101e17); background: light-dark(#21664b, #9be0ba);
     cursor: pointer; font-weight: 600; }
+  a { color: light-dark(#21664b, #9be0ba); }
   :focus-visible { outline: 2px solid light-dark(#21664b, #9be0ba); outline-offset: 2px; }
   .error { color: light-dark(#912e29, #ffc1b9); }
   .account { overflow-wrap: anywhere; }
@@ -56,8 +58,9 @@ FORM = """
 class SetupWeb:
     """Open or reuse a private setup URL on the current user's machine."""
 
-    def __init__(self, verify):
+    def __init__(self, verify, install_url=None):
         self.verify = verify
+        self.install_url = install_url
         self._lock = threading.Lock()
         self._server = None
 
@@ -78,13 +81,24 @@ class SetupWeb:
                 raise SettingsError("无法启动本机配置页，请使用终端配置。") from None
             return server.url
 
+    def wait(self) -> bool:
+        """Wait for the current page to save its settings or expire."""
+        with self._lock:
+            server = self._server
+        if server is None:
+            return False
+        # Leave time to send the final response if a save finishes just before expiry.
+        server.finished.wait(max(0, server.deadline - time.monotonic()) + SOCKET_TIMEOUT)
+        with self._lock:
+            return server.saved
+
     def _save(self, server, endpoint, token):
         account = self.verify(endpoint, token)
         with self._lock:
             if self._server is not server or not server.active():
-                raise SettingsError("配置页已过期，请回到 Codex 重新打开配置页。")
+                raise SettingsError("配置页已过期，请重新打开配置页。")
             _save_settings(endpoint, token)
-            server.complete = True
+            server.saved = True
         return account
 
 
@@ -95,27 +109,27 @@ class _SetupServer(HTTPServer):
         self.owner = owner
         self.path = "/setup/" + secrets.token_urlsafe(32)
         self.deadline = time.monotonic() + SETUP_LIFETIME
-        self.complete = False
+        self.saved = False
+        self.finished = threading.Event()
         super().__init__(("127.0.0.1", 0), _SetupHandler)
         self.host = f"127.0.0.1:{self.server_port}"
         self.origin = f"http://{self.host}"
         self.url = self.origin + self.path
 
     def active(self):
-        return not self.complete and time.monotonic() < self.deadline
+        return not self.saved and not self.finished.is_set() and time.monotonic() < self.deadline
 
     def run(self):
         try:
             while self.active():
                 self.handle_request()
         finally:
-            with self.owner._lock:
-                self.complete = True
-                self.server_close()
+            self.server_close()
+            self.finished.set()
 
     def get_request(self):
         connection, address = super().get_request()
-        connection.settimeout(3)
+        connection.settimeout(SOCKET_TIMEOUT)
         return connection, address
 
     def handle_error(self, request, client_address):
@@ -131,7 +145,7 @@ class _SetupHandler(BaseHTTPRequestHandler):
         pass
 
     def send_error(self, code, message=None, explain=None):
-        self._page(code, "本机配置页不可用", "<p>请回到 Codex 重新打开配置页。</p>")
+        self._page(code, "本机配置页不可用", "<p>请重新打开配置页。</p>")
 
     def _page(self, status, title, body):
         nonce = secrets.token_urlsafe(18)
@@ -208,9 +222,14 @@ class _SetupHandler(BaseHTTPRequestHandler):
             self._form_error(str(error).replace(token, "[已隐藏]") if token else str(error))
         else:
             account = html.escape(account.replace(token, "[已隐藏]")[:512])
+            install_url = self.server.owner.install_url
+            install_link = (
+                f'<p><a href="{html.escape(install_url)}">在 Codex 中安装本地插件</a></p>'
+                if install_url else ""
+            )
             self._page(HTTPStatus.OK, "已连接 Cat_two", (
                 f'<p class="account">当前账号 <strong>{account}</strong></p>'
-                '<p>连接已保存在本机。请新开一个 Codex 会话来加载笔记工具。</p>'
+                '<p>连接已保存在本机。请新开一个 Codex 会话来加载笔记工具。</p>' + install_link
             ))
 
     def _form_error(self, message):

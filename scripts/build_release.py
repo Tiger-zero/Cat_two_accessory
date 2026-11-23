@@ -255,6 +255,10 @@ def build(output_dir, platform="source", cache_dir=None, package_format="marketp
                     contents = mcp_overrides[path] if path in mcp_overrides else source.read_bytes()
                     name = path.relative_to(PLUGIN).as_posix() if standalone else f"{archive_root}/{path.as_posix()}"
                     write_zip_entry(archive, name, contents)
+                if not standalone and platform.startswith("windows-"):
+                    launcher = (ROOT / "scripts/setup-cat-two.cmd").read_text(encoding="ascii")
+                    launcher_bytes = launcher.replace("\n", "\r\n").encode("ascii")
+                    write_zip_entry(archive, f"{archive_root}/setup-cat-two.cmd", launcher_bytes)
                 if platform != "source":
                     add_runtime(archive, runtime_prefix, runtime_tar, executable, omit_terminfo=standalone)
                     write_zip_entry(archive, f"{runtime_prefix}/THIRD-PARTY-LICENSES.rst", license_text)

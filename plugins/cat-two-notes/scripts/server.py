@@ -2,15 +2,19 @@
 
 import json
 import sys
+import threading
+import webbrowser
 from http.client import HTTPException
+from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from settings import NotConfigured, SettingsError, configure, load_settings
 from setup_web import SetupWeb
 
 
-SERVER_INFO = {"name": "cat-two-notes", "version": "1.1.1"}
+SERVER_INFO = {"name": "cat-two-notes", "version": "1.1.2"}
 PROTOCOLS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 NOTES_TOOLS = {
     "auth_get_current_user",
@@ -27,7 +31,7 @@ NOTES_TOOLS = {
 SETUP_HELP = "调用 cat_two_open_setup 获取本机配置页面，在浏览器中填写 Cat_two 地址和 MCP 令牌。"
 STATUS_TOOL = {
     "name": "cat_two_connection_status",
-    "description": "检查本地 Cat_two 配置和当前账号。首次连接时调用 cat_two_open_setup。",
+    "description": "检查本地 Cat_two 配置和当前账号。首次连接时返回本机配置页链接。",
     "inputSchema": {"type": "object", "additionalProperties": False},
     "annotations": {"readOnlyHint": True, "openWorldHint": True},
 }
@@ -169,6 +173,32 @@ def verify_setup(endpoint, token):
         raise SettingsError(str(error)) from None
 
 
+def launch_browser(url):
+    try:
+        webbrowser.open(url, new=2)
+    except (OSError, webbrowser.Error):
+        # The terminal already displays the URL for manual use.
+        pass
+
+
+def setup_browser():
+    plugin_parent = Path(__file__).resolve().parent.parent.parent
+    marketplace = plugin_parent.parent / ".agents" / "plugins" / "marketplace.json"
+    install_url = None
+    if plugin_parent.name == "plugins" and marketplace.is_file():
+        marketplace_path = quote(str(marketplace), safe="")
+        install_url = f"codex://plugins/cat-two-notes?marketplacePath={marketplace_path}"
+    setup = SetupWeb(verify_setup, install_url=install_url)
+    url = setup.open()
+    print("请在浏览器中填写 Cat_two 地址和 MCP 令牌。", flush=True)
+    print("如果浏览器没有自动打开，请在本机浏览器中打开以下链接。", flush=True)
+    print(url, flush=True)
+    threading.Thread(target=launch_browser, args=(url,), daemon=True).start()
+    if not setup.wait():
+        raise SettingsError("配置页已失效，请重新运行配置程序。")
+    print("已保存 Cat_two 连接。", flush=True)
+
+
 def status_result(data, is_error=False):
     return {
         "content": [{"type": "text", "text": json.dumps(data, ensure_ascii=False)}],
@@ -198,6 +228,17 @@ class LocalServer:
             self.remote = None
         return {"tools": tools}
 
+    def open_setup(self, **status):
+        try:
+            url = self.setup.open()
+        except SettingsError as error:
+            return status_result({**status, "message": str(error)}, is_error=True)
+        return status_result({
+            **status,
+            "setupUrl": url,
+            "message": "请在运行 Codex 的同一台电脑上打开此链接，在网页中填写 Cat_two 地址和 MCP 令牌。",
+        })
+
     def call(self, params):
         name = params.get("name")
         arguments = params.get("arguments", {})
@@ -206,14 +247,7 @@ class LocalServer:
         if name == SETUP_TOOL["name"]:
             if arguments:
                 return status_result({"message": "本机配置工具无需参数。"}, is_error=True)
-            try:
-                url = self.setup.open()
-            except SettingsError as error:
-                return status_result({"message": str(error)}, is_error=True)
-            return status_result({
-                "setupUrl": url,
-                "message": "请在运行 Codex 的同一台电脑上打开此链接，在网页中填写 Cat_two 地址和 MCP 令牌。",
-            })
+            return self.open_setup()
         if not isinstance(name, str) or (name != STATUS_TOOL["name"] and name not in NOTES_TOOLS):
             return status_result({"message": "此工具不在插件提供的笔记工具中。"}, is_error=True)
         try:
@@ -227,9 +261,11 @@ class LocalServer:
                 })
             return remote.call(name, arguments)
         except NotConfigured:
+            if name == STATUS_TOOL["name"]:
+                return self.open_setup(configured=False, connected=False)
             return status_result({
                 "configured": False, "connected": False, "message": SETUP_HELP,
-            }, is_error=name != STATUS_TOOL["name"])
+            }, is_error=True)
         except (SettingsError, CatTwoError) as error:
             self.remote = None
             return status_result({
@@ -276,14 +312,18 @@ class LocalServer:
 
 
 def main():
-    if len(sys.argv) == 1:
+    args = sys.argv[1:]
+    if not args:
         LocalServer().run()
         return 0
-    if sys.argv[1:] != ["configure"]:
-        print("Usage: python3 -B server.py [configure]", file=sys.stderr)
-        return 2
     try:
-        configure(verify)
+        if args == ["configure"]:
+            configure(verify)
+        elif args == ["setup-browser"]:
+            setup_browser()
+        else:
+            print("Usage: python3 -B server.py [configure | setup-browser]", file=sys.stderr)
+            return 2
         return 0
     except (SettingsError, CatTwoError) as error:
         print(str(error), file=sys.stderr)
